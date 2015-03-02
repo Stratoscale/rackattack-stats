@@ -1,3 +1,5 @@
 requirements:
 - hash: 2ba1ba5d29fd99e23c2cd9135b16a1f6d883a220
   originURL: https://github.com/Stratoscale/rackattack-physical-dashboard
+- hash: 309a924b04245e4fd29e71aa4f6d2a7806eb2392
+  originURL: https://github.com/Stratoscale/rackattack-virtual

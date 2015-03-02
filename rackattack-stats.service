@@ -1,0 +1,10 @@
+[Unit]
+Description=This monitors RackAttack's nodes status and updates the DB (elasticsearch) with it
+After=syslog.target network.target
+
+[Service]
+Type=simple
+ExecStart=/root/work/rackattack-stats/run_stats.sh
+
+[Install]
+WantedBy=multi-user.target
