@@ -4,7 +4,8 @@ After=syslog.target network.target
 
 [Service]
 Type=simple
-ExecStart=/root/work/rackattack-stats/run_stats.sh
+Environment='PYTHONPATH=/usr/share/rackattack.stats/rackattack.stats.egg'
+ExecStart=/usr/bin/python -m rackattack.stats.main_hosts_stats
 
 [Install]
 WantedBy=multi-user.target

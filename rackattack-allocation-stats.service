@@ -1,0 +1,11 @@
+[Unit]
+Description=This monitors RackAttack's nodes status and updates the DB (elasticsearch) with it
+After=syslog.target network.target
+
+[Service]
+Type=simple
+Environment='PYTHONPATH=/usr/share/rackattack.stats/rackattack.stats.egg'
+ExecStart=/usr/bin/python -m rackattack.stats.main_allocation_stats
+
+[Install]
+WantedBy=multi-user.target

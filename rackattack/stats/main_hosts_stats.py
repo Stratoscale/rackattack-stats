@@ -205,7 +205,7 @@ def add_whole_state(online_for_no_reason,
                     offline_for_no_reason,
                     newly_online_for_no_reason,
                     newly_offline_for_no_reason):
-    # Only write stuff in case there are new errors (since this is sent by 
+    # Only write stuff in case there are new errors (since this is sent by
     # mail
     global msg_so_far
     if msg_so_far:
@@ -215,13 +215,11 @@ def add_whole_state(online_for_no_reason,
             log_msg("\nRun the following command on rackattack-provider.dc1."
                     "strato: {}".format(cmd))
 
-
         if offline_for_no_reason and \
                 offline_for_no_reason != newly_offline_for_no_reason:
             log_msg('The entire list of servers which are offline (and are '
                     'not supposed to be) is:')
             log_msg(pretty_list(offline_for_no_reason))
-
 
         if online_for_no_reason and \
                 online_for_no_reason != newly_online_for_no_reason:
