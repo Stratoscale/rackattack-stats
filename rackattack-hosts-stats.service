@@ -1,10 +1,10 @@
 [Unit]
-Description=This monitors RackAttack's nodes status and updates the DB (elasticsearch) with it
+Description=This monitors RackAttack's hosts status and updates the DB (elasticsearch) with it
 After=syslog.target network.target
 
 [Service]
 Type=simple
-Environment='PYTHONPATH=/usr/share/rackattack.stats/rackattack.stats.egg'
+Environment=PYTHONPATH=<PYTHONPATH> RAP_URI=<RAP_URI> RACKATTACK_PROVIDER=tcp://<RAP_URI>:1014@@amqp://guest:guest@<RAP_URI>:1013/%2F@@http://<RAP_URI>:1016
 ExecStart=/usr/bin/python -m rackattack.stats.main_hosts_stats
 
 [Install]
