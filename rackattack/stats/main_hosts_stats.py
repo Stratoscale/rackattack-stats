@@ -21,6 +21,7 @@ import traceback
 import subprocess
 from time import sleep
 from StringIO import StringIO
+import rackattack.tcp.transport
 from email.mime.text import MIMEText
 from rackattack import clientfactory
 from elasticsearch import Elasticsearch, NotFoundError
@@ -28,20 +29,20 @@ from elasticsearch import Elasticsearch, NotFoundError
 ALLOCATION_LOG_FILENAME = "/var/log/rackattack-allocation-failures.json"
 
 # Interesting configuration
-SAMPLE_INTERVAL_NR_SECONDS = 60
 EMAIL_SUBSCRIBERS = ("eliran@stratoscale.com",)
 SEND_ALERTS_BY_MAIL = True
 
 
 # Less interesting configuration
-RAP_CONFIGURATION_FILENAME = 'rackattack.physical.rack.yaml'
+SAMPLE_INTERVAL_NR_SECONDS = 60
+SAMPLE_INTERVAL_NR_SECONDS = 5
 SENDER_EMAIL = "eliran@stratoscale.com"
 SMTP_SERVER = 'localhost'
 TIMEZONE = 'Asia/Jerusalem'
 RAP_PASSWORD = 'strato'
 # Cycle length of activation of servers which are offline for no reason
 UPDATE_ALLOCATION_FAILURE_DB_PERIOD = 60 * 10
-RAP_CONFIGURATION_FILEPATH = '/etc/{}'.format(RAP_CONFIGURATION_FILENAME)
+RAP_CONFIGURATION_FILEPATH = '/etc/rackattack.physical.rack.yaml'
 TEMP_DIR_PATH = '/tmp'
 # This currently is not doint anything:
 ACTIVATE_SERVERS_PERIOD = 60 * 60 * 4
@@ -51,8 +52,15 @@ ACTIVATE_SERVERS_PERIOD = 60 * 60 * 4
 state = {'online_for_no_reason': set(),
          'offline_for_no_reason': set(),
          'allocation_failures': []}
-last_time = 0
+is_connected = False  # In case we cannot connect to sockets and stuff, this
+                      # changesto False. Needed in order to send mail only when 
+                      # switching between states, and not on every failure to
+                      # establish a connection, on connection creation retries)
 msg_so_far = ''
+
+# Connections
+rackattack_client = None
+db = None
 
 
 def log_msg(msg, level=logging.INFO):
@@ -66,9 +74,15 @@ def log_msg(msg, level=logging.INFO):
 def configure_logger():
     logger = logging.getLogger('rackattack_stats')
     logger.setLevel(logging.INFO)
+    handler = logging.StreamHandler()
+    handler.setLevel(logging.INFO)
+    logger.addHandler(handler)
 
 
 def send_mail(msg):
+    global SEND_ALERTS_BY_MAIL
+    if not SEND_ALERTS_BY_MAIL:
+        return
     msg = MIMEText(msg)
     msg['Subject'] = 'RackAttack Status Alert {}'.format(time.ctime())
     msg['From'] = SENDER_EMAIL
@@ -79,12 +93,18 @@ def send_mail(msg):
     try:
         s = smtplib.SMTP(SMTP_SERVER)
     except socket.error:
-        global SEND_ALERTS_BY_MAIL
         SEND_ALERTS_BY_MAIL = False
         msg = 'Could not connect to an SMTP server at "{}"'.format(SMTP_SERVER)
         raise Exception(msg)
     s.sendmail(msg['From'], EMAIL_SUBSCRIBERS, msg.as_string())
     s.quit()
+
+
+def flush_msgs_to_mail():
+    global msg_so_far
+    if msg_so_far:
+        send_mail(msg_so_far)
+    msg_so_far = ''
 
 
 def pretty_list(lst):
@@ -93,50 +113,6 @@ def pretty_list(lst):
     result += '\n\t* '.join(lst)
     result += "\n"
     return result
-
-
-def dump_configuration(configuration):
-    global RACKATTACK_CONFIG_FILENAME
-    yaml.dump(configuration, open(RACKATTACK_CONFIG_FILENAME, 'wb'))
-
-
-def acticvate_servers(servers, cur_time):
-    """Activate the servers in the given list"""
-    # Validate that enough time has passed
-    global last_time
-    if cur_time - last_time < ACTIVATE_SERVERS_PERIOD:
-        return
-    last_time = cur_time
-
-    log_msg('Trying to activate the servers which are offline for no reason.')
-
-    # Turn off all servers first
-    global RACKATTACK_CONFIG_FILENAME
-    configuration = yaml.load(open(RACKATTACK_CONFIG_FILENAME, 'rb'))
-    for server in configuration['HOSTS']:
-        if server['id'] in servers:
-            server['offline'] = True
-    dump_configuration(configuration)
-    # Kill RackAttack
-    try:
-        pid = int(subprocess.check_output(
-            "ps aux | grep 'rackattack\.physical\.main' | awk '{print $2}' ",
-            shell=True))
-    except ValueError:
-        log_msg("Error while activating servers: Cannot find the PID for "
-                "RackAttack for some reason.",
-                level=logging.ERROR)
-        return
-    os.kill(pid, signal.SIGHUP)
-    time.sleep(5)
-
-    # Now turn on the servers
-    for server in configuration['HOSTS']:
-        if server['id'] in servers:
-                server['offline'] = False
-    dump_configuration()
-    # Kill RackAttack
-    os.kill(pid, signal.SIGHUP)
 
 
 def check_no_longer_offline_for_no_reason(offline_for_no_reason,
@@ -285,7 +261,7 @@ def fetch_from_rap(filepath):
     dest_filepath = os.path.join(TEMP_DIR_PATH, os.path.basename(filepath))
     cmd = 'sshpass -p "{}" scp root@{}:{} {}' \
           .format(RAP_PASSWORD,
-                  os.environ['RAP_ADDR'],
+                  os.environ['RAP_URI'],
                   filepath,
                   dest_filepath)
     subprocess.check_call(cmd, shell=True)
@@ -304,23 +280,19 @@ def datetime_from_timestamp(timestamp):
     return datetime_now
 
 
-def fetch_nodes_stats(rackattack_client, db, timestamp):
+def fetch_nodes_stats(timestamp):
     """Fetch RackAttack stats, add them to db and alert on errors"""
     logger = logging.getLogger('rackattack_stats')
-
-    global msg_so_far
-    msg_so_far = ''
-
-    unixtime = int(timestamp * 1000)
-    datetime_now = datetime_from_timestamp(timestamp)
-
-    logger.debug('Fetching configuration from RAP...')
-    configuration = fetch_from_rap(RAP_CONFIGURATION_FILEPATH)
 
     # Get stats from RackAttack
     stats = rackattack_client.call('admin__queryStatus')
 
+    logger.debug('Fetching configuration from RAP...')
+    configuration = fetch_from_rap(RAP_CONFIGURATION_FILEPATH)
+
     # Insert stats to the DB
+    unixtime = int(timestamp * 1000)
+    datetime_now = datetime_from_timestamp(timestamp)
     for collection_name, items in stats.iteritems():
         logger.debug('Inserting {} records to to collection "{}"'
                      .format(len(items), collection_name))
@@ -358,13 +330,10 @@ def fetch_nodes_stats(rackattack_client, db, timestamp):
     # Alert about servers that died and stuff
     check_errornous_servers(stats['hosts'], configuration)
 
-    if msg_so_far:
-        global SEND_ALERTS_BY_MAIL
-        if SEND_ALERTS_BY_MAIL:
-            send_mail(msg_so_far)
+    flush_msgs_to_mail()
 
 
-def fetch_allocation_failures(db):
+def fetch_allocation_failures():
     log = fetch_from_rap(ALLOCATION_LOG_FILENAME)
     log = yaml.load(StringIO(log))
 
@@ -409,36 +378,88 @@ def fetch_allocation_failures(db):
         db.create(index=index_name, doc_type=doc_type, body=record)
 
 
-def main():
-    configure_logger()
+def create_connection(factory_function, service_name):
     logger = logging.getLogger('rackattack_stats')
-    # Connect to RackAttack
-    client = clientfactory.factory()
-    # Connect to ElasticSearch
+    client = factory_function()
+    logger.info('Connected.')
+    return client
+
+
+def create_connections():
+    global rackattack_client, db
+    # Reload because somehow the socket gets recreated only when this happens
+    reload(rackattack.tcp.transport)
+    reload(clientfactory)
+    rackattack_client = clientfactory.factory()
     db = Elasticsearch()
 
+
+def socket_error_recovery(is_first_connection_attampt):
+    global is_connected
+    logger = logging.getLogger('rackattack_stats')
+
+    # Flush mail messages so far, if this is the first error after at least one
+    # successful execution of fetch_nodes_stats.
+    if is_connected:
+        flush_msgs_to_mail()
+
+    log_msg("Socket error:", level=logging.ERROR)
+    log_msg(traceback.format_exc(), level=logging.ERROR)
+    log_msg("Trying to reconnect in about {} seconds."
+            .format(SAMPLE_INTERVAL_NR_SECONDS),
+            level=logging.ERROR)
+
+    # Alert by mail, if this is the first error after at least one
+    # successful execution of fetch_nodes_stats.
+    if is_connected or is_first_connection_attampt:
+        is_connected = False
+        flush_msgs_to_mail()
+
+    # Try to recreate the connections.
+    # Validate connection to RackAttack is closed, before reconnecting.
+    try:
+        rackattack_client.close()
+    except:
+        pass
+
+
+def main():
+    global is_connected
+    configure_logger()
+    logger = logging.getLogger('rackattack_stats')
+    is_first_connection_attampt = True
+        
     # Fetch stats forever
     while True:
         try:
-            fetch_nodes_stats(client, db, time.time())
+            if not is_connected:
+                logger.info('Attempting to create connections...')
+                create_connections()
+                logger.info("Connections created successfully.")
+
+            fetch_nodes_stats(time.time())
+            if not is_connected and not is_first_connection_attampt:
+                send_mail('RackAttack Stats is connected and works again.')
+            is_connected = True
         except KeyboardInterrupt:
-            return
-        except socket.error, e:
-            logger.error(traceback.format_exc())
-            if isinstance(e.args, tuple):
-                if e[0] in (errno.EPIPE, errno.EBADF):
-                    logger.error("Detected disconnection (error {}), trying "
-                                 "to reconnect...".format(e[0]))
-                    client.close()
-                    client = clientfactory.factory()
-                else:
-                    logger.error("Unknown socket error: {}".format(str(e)))
-            else:
-                logger.error("Unknown socket error: {}".format(str(e)))
+            break
+        except socket.error:
+            socket_error_recovery(is_first_connection_attampt)
+        except rackattack.tcp.transport.TimeoutError:
+            socket_error_recovery(is_first_connection_attampt)
         except Exception:
+            logger.error("Critical error, exiting.")
             logger.error(traceback.format_exc())
-        finally:
-            sleep(SAMPLE_INTERVAL_NR_SECONDS)
+            break
+
+        is_first_connection_attampt = False        
+        sleep(SAMPLE_INTERVAL_NR_SECONDS)
+
+    # Validate connection is closed before exiting.
+    try:
+        rackattack_client.close()
+    except:
+        pass
 
 
 if __name__ == '__main__':
