@@ -1,4 +1,4 @@
-RAP_URI = rack01-server58
+RAP_URI = rackattack-provider.dc1.strato
 MODULE_DIRNAME = $(shell basename `pwd`)
 MODULE_NAME = ${subst -,.,$(MODULE_DIRNAME)}
 EGG_BASENAME = ${MODULE_NAME}.egg

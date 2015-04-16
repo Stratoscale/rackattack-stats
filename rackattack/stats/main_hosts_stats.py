@@ -19,12 +19,12 @@ import smtplib
 import datetime
 import traceback
 import subprocess
+import elasticsearch
 from time import sleep
 from StringIO import StringIO
 import rackattack.tcp.transport
 from email.mime.text import MIMEText
 from rackattack import clientfactory
-from elasticsearch import Elasticsearch, NotFoundError
 # from rackattack.common.hoststatemachine import ALLOCATION_LOG_FILENAME
 ALLOCATION_LOG_FILENAME = "/var/log/rackattack-allocation-failures.json"
 
@@ -35,7 +35,6 @@ SEND_ALERTS_BY_MAIL = True
 
 # Less interesting configuration
 SAMPLE_INTERVAL_NR_SECONDS = 60
-SAMPLE_INTERVAL_NR_SECONDS = 5
 SENDER_EMAIL = "eliran@stratoscale.com"
 SMTP_SERVER = 'localhost'
 TIMEZONE = 'Asia/Jerusalem'
@@ -368,7 +367,7 @@ def fetch_allocation_failures():
                 # Skip this log record since it already exists in the DB
                 print '\n\n\t\tSkipping\n\n'
                 continue
-        except NotFoundError:
+        except elasticsearch.NotFoundError:
             pass
 
         # Insert the record at last
@@ -391,12 +390,18 @@ def create_connections():
     reload(rackattack.tcp.transport)
     reload(clientfactory)
     rackattack_client = clientfactory.factory()
-    db = Elasticsearch()
+    db = elasticsearch.Elasticsearch()
+
+
+def validate_rackattack_client_connection_is_closed():
+    try:
+        rackattack_client.close()
+    except:
+        pass
 
 
 def socket_error_recovery(is_first_connection_attampt):
     global is_connected
-    logger = logging.getLogger('rackattack_stats')
 
     # Flush mail messages so far, if this is the first error after at least one
     # successful execution of fetch_nodes_stats.
@@ -415,12 +420,7 @@ def socket_error_recovery(is_first_connection_attampt):
         is_connected = False
         flush_msgs_to_mail()
 
-    # Try to recreate the connections.
-    # Validate connection to RackAttack is closed, before reconnecting.
-    try:
-        rackattack_client.close()
-    except:
-        pass
+    validate_rackattack_client_connection_is_closed()
 
 
 def main():
@@ -428,7 +428,7 @@ def main():
     configure_logger()
     logger = logging.getLogger('rackattack_stats')
     is_first_connection_attampt = True
-        
+
     # Fetch stats forever
     while True:
         try:
@@ -447,19 +447,20 @@ def main():
             socket_error_recovery(is_first_connection_attampt)
         except rackattack.tcp.transport.TimeoutError:
             socket_error_recovery(is_first_connection_attampt)
+        except elasticsearch.ConnectionTimeout:
+            socket_error_recovery(is_first_connection_attampt)
         except Exception:
-            logger.error("Critical error, exiting.")
-            logger.error(traceback.format_exc())
+            flush_msgs_to_mail()
+            log_msg("Critical error, exiting.")
+            log_msg(traceback.format_exc())
+            flush_msgs_to_mail()
             break
+        finally:
+            is_first_connection_attampt = False
 
-        is_first_connection_attampt = False        
         sleep(SAMPLE_INTERVAL_NR_SECONDS)
 
-    # Validate connection is closed before exiting.
-    try:
-        rackattack_client.close()
-    except:
-        pass
+    validate_rackattack_client_connection_is_closed()
 
 
 if __name__ == '__main__':
