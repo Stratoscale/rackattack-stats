@@ -449,6 +449,8 @@ def main():
             socket_error_recovery(is_first_connection_attampt)
         except elasticsearch.ConnectionTimeout:
             socket_error_recovery(is_first_connection_attampt)
+        except elasticsearch.ConnectionError:
+            socket_error_recovery(is_first_connection_attampt)
         except Exception:
             flush_msgs_to_mail()
             log_msg("Critical error, exiting.")

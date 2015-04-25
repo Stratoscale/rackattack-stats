@@ -1,6 +1,8 @@
 [Unit]
 Description=This monitors allocations within Rackattack updates the DB (elasticsearch) with it
 After=syslog.target network.target
+BindsTo=elasticsearch.service
+After=elasticsearch.service
 
 [Service]
 Type=simple
