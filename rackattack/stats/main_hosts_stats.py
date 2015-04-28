@@ -51,10 +51,11 @@ ACTIVATE_SERVERS_PERIOD = 60 * 60 * 4
 state = {'online_for_no_reason': set(),
          'offline_for_no_reason': set(),
          'allocation_failures': []}
-is_connected = False  # In case we cannot connect to sockets and stuff, this
-                      # changesto False. Needed in order to send mail only when 
-                      # switching between states, and not on every failure to
-                      # establish a connection, on connection creation retries)
+# In case we cannot connect to sockets and stuff, this
+# changesto False. Needed in order to send mail only when
+# switching between states, and not on every failure to
+# establish a connection, on connection creation retries)
+is_connected = False
 msg_so_far = ''
 
 # Connections
@@ -446,6 +447,8 @@ def main():
         except socket.error:
             socket_error_recovery(is_first_connection_attampt)
         except rackattack.tcp.transport.TimeoutError:
+            socket_error_recovery(is_first_connection_attampt)
+        except rackattack.tcp.transport.RemotelyClosedError:
             socket_error_recovery(is_first_connection_attampt)
         except elasticsearch.ConnectionTimeout:
             socket_error_recovery(is_first_connection_attampt)

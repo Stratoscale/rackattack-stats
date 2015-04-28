@@ -38,7 +38,6 @@ class AllocationsHandler(threading.Thread):
         threading.Thread.__init__(self)
         threading.Thread.start(self)
 
-
     def run(self):
         while True:
             self._queue_not_empty_event.wait()
@@ -149,7 +148,8 @@ class AllocationsHandler(threading.Thread):
 
     def _pika_allocation_handler(self, allocation_idx, message):
         with self._tasks_queue_lock:
-            self._tasks_queue.append([self._allocation_handler, message, dict(allocation_idx=allocation_idx)])
+            self._tasks_queue.append([self._allocation_handler, message,
+                                      dict(allocation_idx=allocation_idx)])
             self._queue_not_empty_event.set()
 
     def _pika_all_allocations_handler(self, message):
@@ -157,29 +157,32 @@ class AllocationsHandler(threading.Thread):
             self._tasks_queue.append([self._all_allocations_handler, message, None])
             self._queue_not_empty_event.set()
 
-    def _all_allocations_handler(self, allocation):
-        logging.debug('_all_allocations_handler: {}'.format(allocation))
+    def _all_allocations_handler(self, message):
+        logging.info('_all_allocations_handler: {}'.format(message))
         global subscription_mgr, subscribe, state
+        if message['event'] == 'requested':
+            return
+        assert message['event'] == 'created'
+
+        allocation_idx = message['index']
         with self._hosts_state_lock:
-            allocation = allocation['data']
-            allocation_idx = allocation[0]['allocationIndex']
-            logging.debug('New allocation: {}.'.format(allocation))
+            hosts = message['hosts']
+            logging.debug('New allocation: {}.'.format(hosts))
             logging.info('Subscribing to new allocation (#{}).'.format(allocation_idx))
             allocation_handler = partial(self._pika_allocation_handler, allocation_idx)
             self._subscription_mgr.registerForAllocation(allocation_idx, allocation_handler)
             self._allocation_subscriptions.add(allocation_idx)
             logging.info("Subscribing to allocation #{}'s hosts inauguration info.".format(allocation_idx))
-            for host_idx, allocatedHost in enumerate(allocation):
-                host_id = allocatedHost['host']
+            for name, allocatedHost in hosts.iteritems():
+                host_id = allocatedHost['hostID']
                 # Update hosts state
-                allocation_idx = allocatedHost['allocationIndex']
                 self._hosts_state[host_id] = dict(start_timestamp=time.time(),
                                                   image_hint=allocatedHost['imageHint'],
                                                   image_label=allocatedHost['imageLabel'],
-                                                  name=allocatedHost['name'],
+                                                  name=name,
                                                   allocation_idx=allocation_idx,
                                                   inauguration_done=False,
-                                                  host_idx=host_idx)
+                                                  **message['allocationInfo'])
                 # Subecribe
                 logging.info("Subscribing to inaugurator events of: {}.".
                              format(host_id))
@@ -213,8 +216,8 @@ class AllocationsHandler(threading.Thread):
 
         inauguration_period_length = state['end_timestamp'] - \
             state['start_timestamp']
-        id = "%d%03d%03d" % (state['start_timestamp'], state['allocation_idx'],
-                             state['host_idx'])
+        id = "%d%03d%05d" % (state['start_timestamp'], state['allocation_idx'],
+                             int(str(abs(hash(host_id)))[:5]))
 
         record = dict(timestamp=record_datetime,
                       _timestamp=record_datetime,
@@ -226,7 +229,9 @@ class AllocationsHandler(threading.Thread):
                       remote_store_count=remote_store_count,
                       majorioty_chain_type=majorioty_chain_type,
                       name=state['name'],
-                      allocation_idx=state['allocation_idx'])
+                      allocation_idx=state['allocation_idx'],
+                      user=state['user'],
+                      purpose=state['purpose'])
 
         self._db.create(index=index, doc_type=doc_type, body=record, id=id)
 
@@ -236,7 +241,7 @@ def main():
     logger = logging.getLogger()
     logger.setLevel(logging.INFO)
     handler = logging.StreamHandler()
-    handler.setLevel(logging.INFO)
+    handler.setLevel(logging.DEBUG)
     logger.addHandler(handler)
 
     db = Elasticsearch()
