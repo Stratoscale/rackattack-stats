@@ -164,25 +164,25 @@ class AllocationsHandler(threading.Thread):
             return
         assert message['event'] == 'created'
 
-        allocation_idx = message['index']
+        allocation_idx = message['allocationID']
+        allocation_info = message['allocationInfo']
+        requirements = message['requirements']
         with self._hosts_state_lock:
-            hosts = message['hosts']
+            hosts = message['allocated']
             logging.debug('New allocation: {}.'.format(hosts))
             logging.info('Subscribing to new allocation (#{}).'.format(allocation_idx))
             allocation_handler = partial(self._pika_allocation_handler, allocation_idx)
             self._subscription_mgr.registerForAllocation(allocation_idx, allocation_handler)
             self._allocation_subscriptions.add(allocation_idx)
             logging.info("Subscribing to allocation #{}'s hosts inauguration info.".format(allocation_idx))
-            for name, allocatedHost in hosts.iteritems():
-                host_id = allocatedHost['hostID']
+            for name, host_id in hosts.iteritems():
                 # Update hosts state
                 self._hosts_state[host_id] = dict(start_timestamp=time.time(),
-                                                  image_hint=allocatedHost['imageHint'],
-                                                  image_label=allocatedHost['imageLabel'],
                                                   name=name,
                                                   allocation_idx=allocation_idx,
                                                   inauguration_done=False,
-                                                  **message['allocationInfo'])
+                                                  **requirements[name])
+                self._hosts_state[host_id].update(allocation_info)
                 # Subecribe
                 logging.info("Subscribing to inaugurator events of: {}.".
                              format(host_id))
@@ -222,16 +222,11 @@ class AllocationsHandler(threading.Thread):
         record = dict(timestamp=record_datetime,
                       _timestamp=record_datetime,
                       host_id=host_id,
-                      image_label=state['image_label'],
-                      image_hint=state['image_hint'],
                       inauguration_period_length=inauguration_period_length,
                       local_store_count=local_store_count,
                       remote_store_count=remote_store_count,
-                      majorioty_chain_type=majorioty_chain_type,
-                      name=state['name'],
-                      allocation_idx=state['allocation_idx'],
-                      user=state['user'],
-                      purpose=state['purpose'])
+                      majorioty_chain_type=majorioty_chain_type)
+        record.update(state)
 
         self._db.create(index=index, doc_type=doc_type, body=record, id=id)
 
