@@ -10,7 +10,7 @@ from rackattack.tcp.subscribe import Subscribe
 
 
 TIMEZONE = 'Asia/Jerusalem'
-RABBITMQ_CONNECTNION_URL = r'amqp://guest:guest@rack01-server58:1013/%2F'
+RABBITMQ_CONNECTNION_URL = r'amqp://guest:guest@rackattack-provider:1013/%2F'
 
 
 def datetime_from_timestamp(timestamp):
@@ -29,8 +29,11 @@ class AllocationsHandler(threading.Thread):
         global RABBITMQ_CONNECTNION_URL
         self._subscription_mgr = Subscribe(RABBITMQ_CONNECTNION_URL)
         self._subscription_mgr._readyEvent.wait()
+        self._all_allocations_subscription_mgr = rackattack_client._subscribe
+        self._all_allocations_subscription_mgr._readyEvent.wait()
         logging.info('Subscribing to all hosts allocations.')
-        self._subscription_mgr.registerForAllAllocations(self._pika_all_allocations_handler)
+        self._all_allocations_subscription_mgr.registerForAllAllocations(self._pika_all_allocations_handler)
+        logging.info('Subscribed.')
         self._allocation_subscriptions = set()
         self._tasks_queue_lock = threading.Lock()
         self._tasks_queue = []
@@ -134,8 +137,7 @@ class AllocationsHandler(threading.Thread):
                     self._ubsubscribe_allocation(allocation_idx)
                 else:
                     logging.info("Allocation {} has changed its state and it's still alive and waiting for "
-                                 " some inaugurations to complete.".format(allocation_idx))
-                    self._ubsubscribe_allocation(allocation_idx)
+                                 "some inaugurations to complete.".format(allocation_idx))
             elif message.get('event', None) == "providerMessage":
                 logging.info("Rackattack provider says: %(message)s", dict(message=message['message']))
             elif message.get('event', None) == "withdrawn":
@@ -173,8 +175,8 @@ class AllocationsHandler(threading.Thread):
             logging.info('Subscribing to new allocation (#{}).'.format(allocation_idx))
             allocation_handler = partial(self._pika_allocation_handler, allocation_idx)
             self._subscription_mgr.registerForAllocation(allocation_idx, allocation_handler)
+            logging.info('Susbcribed')
             self._allocation_subscriptions.add(allocation_idx)
-            logging.info("Subscribing to allocation #{}'s hosts inauguration info.".format(allocation_idx))
             for name, host_id in hosts.iteritems():
                 # Update hosts state
                 self._hosts_state[host_id] = dict(start_timestamp=time.time(),
@@ -187,6 +189,7 @@ class AllocationsHandler(threading.Thread):
                 logging.info("Subscribing to inaugurator events of: {}.".
                              format(host_id))
                 self._subscription_mgr.registerForInagurator(host_id, self._pika_inauguration_handler)
+                logging.info("Subscribed.")
 
     def _add_allocation_record_to_db(self, host_id):
         index = 'allocations_'
@@ -216,6 +219,8 @@ class AllocationsHandler(threading.Thread):
 
         inauguration_period_length = state['end_timestamp'] - \
             state['start_timestamp']
+        logging.info('{}, {}, {}'.format(state['start_timestamp'],
+        state['allocation_idx'], host_id))
         id = "%d%03d%05d" % (state['start_timestamp'], state['allocation_idx'],
                              int(str(abs(hash(host_id)))[:5]))
 
@@ -228,7 +233,10 @@ class AllocationsHandler(threading.Thread):
                       majorioty_chain_type=majorioty_chain_type)
         record.update(state)
 
-        self._db.create(index=index, doc_type=doc_type, body=record, id=id)
+        try:
+            self._db.create(index=index, doc_type=doc_type, body=record, id=id)
+        except Exception:
+            print '\n\n\n\nError while inserting record \n\n\n\n'
 
 
 def main():
