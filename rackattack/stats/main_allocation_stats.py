@@ -1,5 +1,6 @@
 import time
 import pytz
+import Queue
 import logging
 import datetime
 import threading
@@ -10,7 +11,6 @@ from rackattack.tcp.subscribe import Subscribe
 
 
 TIMEZONE = 'Asia/Jerusalem'
-RABBITMQ_CONNECTNION_URL = r'amqp://guest:guest@rackattack-provider:1013/%2F'
 
 
 def datetime_from_timestamp(timestamp):
@@ -24,63 +24,51 @@ class AllocationsHandler(threading.Thread):
     def __init__(self, db, rackattack_client):
         self._hosts_state = dict()
         self._db = db
-        self._hosts_state_lock = threading.Lock()
         self._rackattack_client = rackattack_client
-        global RABBITMQ_CONNECTNION_URL
-        self._subscription_mgr = Subscribe(RABBITMQ_CONNECTNION_URL)
-        self._subscription_mgr._readyEvent.wait()
         self._all_allocations_subscription_mgr = rackattack_client._subscribe
-        self._all_allocations_subscription_mgr._readyEvent.wait()
-        logging.info('Subscribing to all hosts allocations.')
+        _, amqp_url, _ = os.environ['RACKATTACK_PROVIDER'].split("@@")
+        self._subscription_mgr = Subscribe(amqp_url)
+        logging.info('Subscribing to all hosts allocations...')
         self._all_allocations_subscription_mgr.registerForAllAllocations(self._pika_all_allocations_handler)
         logging.info('Subscribed.')
         self._allocation_subscriptions = set()
-        self._tasks_queue_lock = threading.Lock()
-        self._tasks_queue = []
-        self._queue_not_empty_event = threading.Event()
+        self._tasks = Queue.Queue()
         threading.Thread.__init__(self)
-        threading.Thread.start(self)
 
     def run(self):
         while True:
-            self._queue_not_empty_event.wait()
-            with self._tasks_queue_lock:
-                while self._tasks_queue:
-                    callback, message, args = self._tasks_queue.pop(0)
-                    if args is None:
-                        callback(message)
-                    else:
-                        callback(message, **args)
-                self._queue_not_empty_event.clear()
+            logging.info('Waiting for a new event...')
+            callback, message, args = self._tasks.get(block=True)
+            if args is None:
+                callback(message)
+            else:
+                callback(message, **args)
 
     def _pika_inauguration_handler(self, message):
-        with self._tasks_queue_lock:
-            self._tasks_queue.append([self._inauguration_handler, message, None])
-            self._queue_not_empty_event.set()
+        self._tasks.put([self._inauguration_handler, message, None])
 
     def _inauguration_handler(self, msg):
         logging.debug('Inaugurator message: {}'.format(msg))
-        with self._hosts_state_lock:
-            if 'id' not in msg:
-                logging.error('_inauguration_handler: WTF msg={}.'.format(msg))
-                return
-            host_id = msg['id']
-            try:
-                host_state = self._hosts_state[host_id]
-            except KeyError:
-                logging.error('Got an inauguration message for a host without'
-                              ' a known allocation: {}'.format(host_id))
-                return
+        if 'id' not in msg:
+            logging.error('_inauguration_handler: WTF msg={}.'.format(msg))
+            return
+        host_id = msg['id']
+        try:
+            host_state = self._hosts_state[host_id]
+        except KeyError:
+            logging.error('Got an inauguration message for a host without'
+                            ' a known allocation: {}'.format(host_id))
+            return
 
-            if msg['status'] == 'done':
-                host_state['end_timestamp'] = time.time()
-                host_state['inauguration_done'] = True
-                logging.info('Host "{}" has inaugurated, congratulations.'.format(host_id))
-                self._add_allocation_record_to_db(host_id)
-            elif msg['status'] == 'progress' and \
-                    msg['progress']['state'] == 'fetching':
-                chain_count = msg['progress']['chainGetCount']
-                self._hosts_state[host_id]['latest_chain_count'] = chain_count
+        if msg['status'] == 'done':
+            host_state['end_timestamp'] = time.time()
+            host_state['inauguration_done'] = True
+            logging.info('Host "{}" has inaugurated, congratulations.'.format(host_id))
+            self._add_allocation_record_to_db(host_id)
+        elif msg['status'] == 'progress' and \
+                msg['progress']['state'] == 'fetching':
+            chain_count = msg['progress']['chainGetCount']
+            self._hosts_state[host_id]['latest_chain_count'] = chain_count
 
     def _ubsubscribe_allocation(self, allocation_idx):
         logging.info('Unsubscribing from allocation {}.'.format(allocation_idx))
@@ -124,40 +112,34 @@ class AllocationsHandler(threading.Thread):
 
     def _allocation_handler(self, message, allocation_idx):
         logging.debug('_allocation_handler: {} {}'.format(allocation_idx, message))
-        with self._hosts_state_lock:
-            if message.get('event', None) == "changedState":
-                is_dead = self._is_allocation_dead(allocation_idx)
-                if is_dead:
-                    logging.info('Allocation {} has died of reason "{}"'.format(allocation_idx, is_dead))
-                    self._ubsubscribe_allocation(allocation_idx)
-                elif self._are_all_inaugurations_done(allocation_idx):
-                    logging.info("Allocation {} has changed its state and it's still alive, but it does not"
-                                 " wait for any more inaugurations, so unsubscribing from it.".
-                                 format(allocation_idx))
-                    self._ubsubscribe_allocation(allocation_idx)
-                else:
-                    logging.info("Allocation {} has changed its state and it's still alive and waiting for "
-                                 "some inaugurations to complete.".format(allocation_idx))
-            elif message.get('event', None) == "providerMessage":
-                logging.info("Rackattack provider says: %(message)s", dict(message=message['message']))
-            elif message.get('event', None) == "withdrawn":
-                logging.info("Rackattack provider widthdrew allocation: '%(message)s",
-                             dict(message=message['message']))
+        if message.get('event', None) == "changedState":
+            is_dead = self._is_allocation_dead(allocation_idx)
+            if is_dead:
+                logging.info('Allocation {} has died of reason "{}"'.format(allocation_idx, is_dead))
+                self._ubsubscribe_allocation(allocation_idx)
+            elif self._are_all_inaugurations_done(allocation_idx):
+                logging.info("Allocation {} has changed its state and it's still alive, but it does not"
+                                " wait for any more inaugurations, so unsubscribing from it.".
+                                format(allocation_idx))
                 self._ubsubscribe_allocation(allocation_idx)
             else:
-                logging.error('_allocation_handler: WTF allocation_idx={}, message={}.'.
-                              format(allocation_idx, message))
+                logging.info("Allocation {} has changed its state and it's still alive and waiting for "
+                                "some inaugurations to complete.".format(allocation_idx))
+        elif message.get('event', None) == "providerMessage":
+            logging.info("Rackattack provider says: %(message)s", dict(message=message['message']))
+        elif message.get('event', None) == "withdrawn":
+            logging.info("Rackattack provider widthdrew allocation: '%(message)s",
+                            dict(message=message['message']))
+            self._ubsubscribe_allocation(allocation_idx)
+        else:
+            logging.error('_allocation_handler: WTF allocation_idx={}, message={}.'.
+                            format(allocation_idx, message))
 
-    def _pika_allocation_handler(self, allocation_idx, message):
-        with self._tasks_queue_lock:
-            self._tasks_queue.append([self._allocation_handler, message,
-                                      dict(allocation_idx=allocation_idx)])
-            self._queue_not_empty_event.set()
+    def _pika_allocation_handler(self, idx, message):
+        self._tasks.put([self._allocation_handler, message, dict(allocation_idx=idx)])
 
     def _pika_all_allocations_handler(self, message):
-        with self._tasks_queue_lock:
-            self._tasks_queue.append([self._all_allocations_handler, message, None])
-            self._queue_not_empty_event.set()
+        self._tasks.put([self._all_allocations_handler, message, None], block=True)
 
     def _all_allocations_handler(self, message):
         logging.info('_all_allocations_handler: {}'.format(message))
@@ -166,30 +148,27 @@ class AllocationsHandler(threading.Thread):
             return
         assert message['event'] == 'created'
 
-        allocation_idx = message['allocationID']
-        allocation_info = message['allocationInfo']
+        idx = message['allocationID']
+        info = message['allocationInfo']
         requirements = message['requirements']
-        with self._hosts_state_lock:
-            hosts = message['allocated']
-            logging.debug('New allocation: {}.'.format(hosts))
-            logging.info('Subscribing to new allocation (#{}).'.format(allocation_idx))
-            allocation_handler = partial(self._pika_allocation_handler, allocation_idx)
-            self._subscription_mgr.registerForAllocation(allocation_idx, allocation_handler)
-            logging.info('Susbcribed')
-            self._allocation_subscriptions.add(allocation_idx)
-            for name, host_id in hosts.iteritems():
-                # Update hosts state
-                self._hosts_state[host_id] = dict(start_timestamp=time.time(),
-                                                  name=name,
-                                                  allocation_idx=allocation_idx,
-                                                  inauguration_done=False,
-                                                  **requirements[name])
-                self._hosts_state[host_id].update(allocation_info)
-                # Subecribe
-                logging.info("Subscribing to inaugurator events of: {}.".
-                             format(host_id))
-                self._subscription_mgr.registerForInagurator(host_id, self._pika_inauguration_handler)
-                logging.info("Subscribed.")
+        hosts = message['allocated']
+        logging.debug('New allocation: {}.'.format(hosts))
+        logging.info('Subscribing to new allocation (#{}).'.format(idx))
+        allocation_handler = partial(self._pika_allocation_handler, idx)
+        self._subscription_mgr.registerForAllocation(idx, allocation_handler)
+        logging.info('Susbcribed')
+        self._allocation_subscriptions.add(idx)
+        for name, host_id in hosts.iteritems():
+            # Update hosts state
+            self._hosts_state[host_id] = dict(start_timestamp=time.time(),
+                                                name=name,
+                                                allocation_idx=idx,
+                                                inauguration_done=False,
+                                                **requirements[name])
+            self._hosts_state[host_id].update(info)
+            logging.info("Subscribing to inaugurator events of: {}.".format(host_id))
+            self._subscription_mgr.registerForInagurator(host_id, self._pika_inauguration_handler)
+            logging.info("Subscribed.")
 
     def _add_allocation_record_to_db(self, host_id):
         index = 'allocations_'
@@ -205,22 +184,19 @@ class AllocationsHandler(threading.Thread):
             local_store_count = chain_count.pop(0)
             remote_store_count = chain_count.pop(0)
         except KeyError:
-            # NO info abount Osmosis chain
+            # NO info about Osmosis chain
             pass
         except IndexError:
             pass
 
-        majorioty_chain_type = 'unknown'
+        majority_chain_type = 'unknown'
         if local_store_count is not None:
-            majorioty_chain_type = 'local'
+            majority_chain_type = 'local'
             if remote_store_count is not None and \
                     local_store_count < remote_store_count:
-                majorioty_chain_type = 'remote'
+                majority_chain_type = 'remote'
 
-        inauguration_period_length = state['end_timestamp'] - \
-            state['start_timestamp']
-        logging.info('{}, {}, {}'.format(state['start_timestamp'],
-        state['allocation_idx'], host_id))
+        inauguration_period_length = state['end_timestamp'] - state['start_timestamp']
         id = "%d%03d%05d" % (state['start_timestamp'], state['allocation_idx'],
                              int(str(abs(hash(host_id)))[:5]))
 
@@ -230,11 +206,11 @@ class AllocationsHandler(threading.Thread):
                       inauguration_period_length=inauguration_period_length,
                       local_store_count=local_store_count,
                       remote_store_count=remote_store_count,
-                      majorioty_chain_type=majorioty_chain_type)
+                      majority_chain_type=majority_chain_type)
         record.update(state)
 
         try:
-            self._db.create(index=index, doc_type=doc_type, body=record, id=id)
+            print 'Not inserting record since no DB yet: {}'.format(record)
         except Exception:
             print '\n\n\n\nError while inserting record \n\n\n\n'
 
@@ -247,12 +223,12 @@ def main():
     handler.setLevel(logging.DEBUG)
     logger.addHandler(handler)
 
-    db = Elasticsearch()
+    db = None
     client = clientfactory.factory()
     handler = AllocationsHandler(db, client)
-
-    a = threading.Event()
-    a.wait()
+    handler.start()
+    handler.join()
+    logging.info("Done.")
 
 if __name__ == '__main__':
     main()
