@@ -1,4 +1,4 @@
-RAP_URI = rackattack-provider.dc1.strato
+RAP_URI = 10.16.3.1
 MODULE_DIRNAME = $(shell basename `pwd`)
 MODULE_NAME = ${subst -,.,$(MODULE_DIRNAME)}
 EGG_BASENAME = ${MODULE_NAME}.egg
@@ -31,7 +31,6 @@ install: build/$(EGG_BASENAME)
 	for _service in ${SERVICES_FILENAMES} ; do \
 		sudo sh -c "sed 's/<RAP_URI>/${RAP_URI}/g' $$_service | sed 's/<PYTHONPATH>/\/usr\/share\/$(MODULE_NAME)\/$(EGG_BASENAME)/g' > '${SERVICES_DEPLOYMENT_PATH}$$_service'" ; \
 		sudo systemctl enable $$_service ; \
-		(if ["$(DONT_START_SERVICE)" == ""]; then sudo systemctl start $$_service; fi ) ; \
 	done
 
 uninstall:
