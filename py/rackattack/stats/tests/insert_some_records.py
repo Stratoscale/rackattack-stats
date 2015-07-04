@@ -44,6 +44,7 @@ class Test(unittest.TestCase):
 
     def test_OneAllocation(self):
         logger.info("Starting main-allocation-stats's main thread...")
+        logger.handlers = list()
         self.mainThread.start()
         logger.info("Waiting for main-allocation-stats' thread to be ready...")
         self.readyEvent.wait()
