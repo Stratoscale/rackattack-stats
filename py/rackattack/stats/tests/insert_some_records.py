@@ -38,18 +38,19 @@ class Test(unittest.TestCase):
     def setUp(self):
         rackattack.tcp.subscribe.Subscribe = SubscribeMock
         pymongo.MongoClient = mock.Mock()
-        self.readyEvent = threading.Event()
-        self.mainThread = threading.Thread(target=rackattack.stats.main_allocation_stats.main,
-                                           args=(self.readyEvent,))
+        self.ready_event = threading.Event()
+        self.main_thread= threading.Thread(target=rackattack.stats.main_allocation_stats.main,
+                                           args=(self.ready_event,))
 
-    def test_OneAllocation(self):
+    def test_one_allocation(self):
         logger.info("Starting main-allocation-stats's main thread...")
         logger.handlers = list()
-        self.mainThread.start()
+        self.main_thread.start()
         logger.info("Waiting for main-allocation-stats' thread to be ready...")
-        self.readyEvent.wait()
+        self.ready_event.wait()
         logger.info("Thread is ready. Inoking callbacks...")
-        self.mainThread.join()
+        
+        self.main_thread.join()
 
 
 if __name__ == '__main__':

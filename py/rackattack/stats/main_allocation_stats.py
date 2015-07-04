@@ -21,7 +21,7 @@ def datetime_from_timestamp(timestamp):
 
 
 class AllocationsHandler(threading.Thread):
-    def __init__(self, db, readyEvent):
+    def __init__(self, db, ready_event):
         self._hosts_state = dict()
         self._db = db
         _, amqp_url, _ = os.environ['RACKATTACK_PROVIDER'].split("@@")
@@ -31,12 +31,12 @@ class AllocationsHandler(threading.Thread):
         logging.info('Subscribed.')
         self._allocation_subscriptions = set()
         self._tasks = Queue.Queue()
-        self._readyEvent = readyEvent
+        self.ready_event = ready_event
         threading.Thread.__init__(self)
 
     def run(self):
         while True:
-            self._readyEvent.set()
+            self.ready_event.set()
             logging.info('Waiting for a new event...')
             callback, message, args = self._tasks.get(block=True)
             if args is None:
@@ -216,7 +216,7 @@ class AllocationsHandler(threading.Thread):
             print '\n\n\n\nError while inserting record \n\n\n\n'
 
 
-def main(readyEvent=None):
+def main(ready_event=None):
     global subscription_mgr
     logger = logging.getLogger()
     logger.setLevel(logging.INFO)
@@ -224,14 +224,14 @@ def main(readyEvent=None):
     handler.setLevel(logging.DEBUG)
     logger.addHandler(handler)
 
-    if readyEvent is None:
-        readyEvent = threading.Event()
+    if ready_event is None:
+        ready_event = threading.Event()
 
     db = pymongo.MongoClient()
-    handler = AllocationsHandler(db, readyEvent)
+    handler = AllocationsHandler(db, ready_event)
     handler.start()
     logging.info("Initializing allocations handler....")
-    readyEvent.wait()
+    ready_event.wait()
     logging.info("Allocations handler is ready.")
     handler.join()
     logging.info("Done.")
