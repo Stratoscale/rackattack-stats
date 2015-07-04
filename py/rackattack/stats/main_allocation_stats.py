@@ -1,13 +1,14 @@
+import os
 import time
 import pytz
 import Queue
 import logging
+import pymongo
 import datetime
 import threading
 from functools import partial
+from rackattack.tcp import subscribe
 from rackattack import clientfactory
-from elasticsearch import Elasticsearch
-from rackattack.tcp.subscribe import Subscribe
 
 
 TIMEZONE = 'Asia/Jerusalem'
@@ -21,22 +22,24 @@ def datetime_from_timestamp(timestamp):
 
 
 class AllocationsHandler(threading.Thread):
-    def __init__(self, db, rackattack_client):
+    def __init__(self, db, rackattack_client, readyEvent):
         self._hosts_state = dict()
         self._db = db
         self._rackattack_client = rackattack_client
         self._all_allocations_subscription_mgr = rackattack_client._subscribe
         _, amqp_url, _ = os.environ['RACKATTACK_PROVIDER'].split("@@")
-        self._subscription_mgr = Subscribe(amqp_url)
+        self._subscription_mgr = subscribe.Subscribe(amqp_url)
         logging.info('Subscribing to all hosts allocations...')
         self._all_allocations_subscription_mgr.registerForAllAllocations(self._pika_all_allocations_handler)
         logging.info('Subscribed.')
         self._allocation_subscriptions = set()
         self._tasks = Queue.Queue()
+        self._readyEvent = readyEvent
         threading.Thread.__init__(self)
 
     def run(self):
         while True:
+            self._readyEvent.set()
             logging.info('Waiting for a new event...')
             callback, message, args = self._tasks.get(block=True)
             if args is None:
@@ -209,13 +212,14 @@ class AllocationsHandler(threading.Thread):
                       majority_chain_type=majority_chain_type)
         record.update(state)
 
+        collection = db.inaugurations
         try:
-            print 'Not inserting record since no DB yet: {}'.format(record)
+            collection.insert_one(record)
         except Exception:
             print '\n\n\n\nError while inserting record \n\n\n\n'
 
 
-def main():
+def main(readyEvent=None):
     global subscription_mgr
     logger = logging.getLogger()
     logger.setLevel(logging.INFO)
@@ -223,10 +227,16 @@ def main():
     handler.setLevel(logging.DEBUG)
     logger.addHandler(handler)
 
-    db = None
+    if readyEvent is None:
+        readyEvent = threading.Event()
+
+    db = pymongo.MongoClient()
     client = clientfactory.factory()
-    handler = AllocationsHandler(db, client)
+    handler = AllocationsHandler(db, client, readyEvent)
     handler.start()
+    logging.info("Initializing allocations handler....")
+    readyEvent.wait()
+    logging.info("Allocations handler is ready.")
     handler.join()
     logging.info("Done.")
 
