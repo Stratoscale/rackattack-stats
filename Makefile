@@ -3,14 +3,14 @@ MODULE_DIRNAME = $(shell basename `pwd`)
 MODULE_NAME = ${subst -,.,$(MODULE_DIRNAME)}
 EGG_BASENAME = ${MODULE_NAME}.egg
 SERVICES_FILENAMES = $(shell find -maxdepth 1 -name "*.service" | sed 's/.\///g')
-PYTHON_FILES = $(shell find rackattack -name "*.py")
-MAIN_FILES = $(shell find rackattack -name "*main*.py")
+PYTHON_FILES = $(shell find py -name "*.py")
+MAIN_FILES = $(shell find py -name "*main*.py")
 SERVICES_DEPLOYMENT_PATH = /usr/lib/systemd/system/
 
-all: build check_convention
+all: check_convention build
 
 check_convention:
-	pep8 rackattack --max-line-length=109
+	pep8 py --max-line-length=109
 
 .PHONY: build
 build: build/$(EGG_BASENAME)

@@ -212,8 +212,7 @@ def check_errornous_servers(items, configuration):
     # Get info on errornous servers by comparing the stats to the configuration
     configured_to_be_online = \
         [host['id'] for host in configuration['HOSTS'] if not host['offline']]
-    actually_online = [host['id'] for host in items if \
-                       host['state'] != 'OFFLINE']
+    actually_online = [host['id'] for host in items if host['state'] != 'OFFLINE']
     online_for_no_reason = set([host for host in actually_online if
                                 host not in configured_to_be_online])
     offline_for_no_reason = set([host for host in configured_to_be_online if
