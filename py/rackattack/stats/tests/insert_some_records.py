@@ -19,7 +19,7 @@ class SubscribeMock(object):
         self.inaugurations_callbacks = dict()
         self.instances.append(self)
 
-    def registerForAllAllocation(self, callback):
+    def registerForAllAllocations(self, callback):
         self.all_allocations_handler = callback
 
     def registerForAllocation(self, idx, callback):
@@ -41,7 +41,6 @@ class Test(unittest.TestCase):
         self.readyEvent = threading.Event()
         self.mainThread = threading.Thread(target=rackattack.stats.main_allocation_stats.main,
                                            args=(self.readyEvent,))
-        rackattack.clientfactory.factory = mock.Mock()
 
     def test_OneAllocation(self):
         logger.info("Starting main-allocation-stats's main thread...")
