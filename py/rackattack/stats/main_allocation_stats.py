@@ -39,10 +39,16 @@ class AllocationsHandler(threading.Thread):
             self.ready_event.set()
             logging.info('Waiting for a new event...')
             callback, message, args = self._tasks.get(block=True)
+            if callback is None:
+                logging.info('Finished handling events.')
+                break
             if args is None:
                 callback(message)
             else:
                 callback(message, **args)
+
+    def stop(self):
+        self._tasks.put([None, None, None])
 
     def _pika_inauguration_handler(self, message):
         self._tasks.put([self._inauguration_handler, message, None])
@@ -113,18 +119,8 @@ class AllocationsHandler(threading.Thread):
     def _allocation_handler(self, message, allocation_idx):
         logging.debug('_allocation_handler: {} {}'.format(allocation_idx, message))
         if message.get('event', None) == "changedState":
-            is_dead = self._is_allocation_dead(allocation_idx)
-            if is_dead:
-                logging.info('Allocation {} has died of reason "{}"'.format(allocation_idx, is_dead))
-                self._ubsubscribe_allocation(allocation_idx)
-            elif self._are_all_inaugurations_done(allocation_idx):
-                logging.info("Allocation {} has changed its state and it's still alive, but it does not"
-                                " wait for any more inaugurations, so unsubscribing from it.".
-                                format(allocation_idx))
-                self._ubsubscribe_allocation(allocation_idx)
-            else:
-                logging.info("Allocation {} has changed its state and it's still alive and waiting for "
-                                "some inaugurations to complete.".format(allocation_idx))
+            logging.info('Inauguration for allocation {} is over.'.format(allocation_idx))
+            self._ubsubscribe_allocation(allocation_idx)
         elif message.get('event', None) == "providerMessage":
             logging.info("Rackattack provider says: %(message)s", dict(message=message['message']))
         elif message.get('event', None) == "withdrawn":
@@ -165,6 +161,7 @@ class AllocationsHandler(threading.Thread):
                                                 allocation_idx=idx,
                                                 inauguration_done=False,
                                                 **requirements[name])
+            assert not set(info.keys()).intersection(set(self._hosts_state.keys()))
             self._hosts_state[host_id].update(info)
             logging.info("Subscribing to inaugurator events of: {}.".format(host_id))
             self._subscription_mgr.registerForInagurator(host_id, self._pika_inauguration_handler)
@@ -208,15 +205,16 @@ class AllocationsHandler(threading.Thread):
                       remote_store_count=remote_store_count,
                       majority_chain_type=majority_chain_type)
         record.update(state)
+        logging.info("Inserting to DB: {}".format(record))
 
-        collection = db.inaugurations
+        collection = self._db.inaugurations
         try:
             collection.insert_one(record)
         except Exception:
             print '\n\n\n\nError while inserting record \n\n\n\n'
 
 
-def main(ready_event=None):
+def main(ready_event=None, stop_event=threading.Event()):
     global subscription_mgr
     logger = logging.getLogger()
     logger.setLevel(logging.INFO)
@@ -228,11 +226,12 @@ def main(ready_event=None):
         ready_event = threading.Event()
 
     db = pymongo.MongoClient()
+    logging.info("Initializing allocations handler....")
     handler = AllocationsHandler(db, ready_event)
     handler.start()
-    logging.info("Initializing allocations handler....")
     ready_event.wait()
-    logging.info("Allocations handler is ready.")
+    stop_event.wait()
+    handler.stop()
     handler.join()
     logging.info("Done.")
 
