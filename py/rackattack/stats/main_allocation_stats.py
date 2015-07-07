@@ -20,14 +20,18 @@ def datetime_from_timestamp(timestamp):
     return datetime_now
 
 
+class DB(object):
+    def insert_inauguration(self, record):
+        logging.info("Inserting to DB: {}".format(record))
+
+
 class AllocationsHandler(threading.Thread):
-    def __init__(self, db, ready_event):
+    def __init__(self, subscription_mgr, db, ready_event):
         self._hosts_state = dict()
         self._db = db
-        _, amqp_url, _ = os.environ['RACKATTACK_PROVIDER'].split("@@")
-        self._subscription_mgr = subscribe.Subscribe(amqp_url)
+        self._subscription_mgr = subscription_mgr
         logging.info('Subscribing to all hosts allocations...')
-        self._subscription_mgr.registerForAllAllocations(self._pika_all_allocations_handler)
+        subscription_mgr.registerForAllAllocations(self._pika_all_allocations_handler)
         logging.info('Subscribed.')
         self._allocation_subscriptions = set()
         self._tasks = Queue.Queue()
@@ -35,74 +39,61 @@ class AllocationsHandler(threading.Thread):
         threading.Thread.__init__(self)
 
     def run(self):
+        self.ready_event.set()
         while True:
-            self.ready_event.set()
             logging.info('Waiting for a new event...')
-            callback, message, args = self._tasks.get(block=True)
+            finishedEvent, callback, message, args = self._tasks.get(block=True)
             if callback is None:
                 logging.info('Finished handling events.')
+                finishedEvent.set()
                 break
             if args is None:
                 callback(message)
             else:
                 callback(message, **args)
+            if finishedEvent is not None:
+                finishedEvent.set()
 
     def stop(self):
-        self._tasks.put([None, None, None])
+        finishedEvent = threading.Event()
+        self._tasks.put([finishedEvent, None, None, None])
+        finishedEvent.wait()
 
     def _pika_inauguration_handler(self, message):
-        self._tasks.put([self._inauguration_handler, message, None])
+        self._tasks.put([None, self._inauguration_handler, message, None])
+
+    def _unregister_from_host(self, host_id):
+        del self._hosts_state[host_id]
+        self._subscription_mgr.unregisterForInaugurator(host_id)
 
     def _inauguration_handler(self, msg):
         logging.debug('Inaugurator message: {}'.format(msg))
-        if 'id' not in msg:
-            logging.error('_inauguration_handler: WTF msg={}.'.format(msg))
-            return
         host_id = msg['id']
-        try:
-            host_state = self._hosts_state[host_id]
-        except KeyError:
+        if host_id not in self._hosts_state:
             logging.error('Got an inauguration message for a host without'
-                          ' a known allocation: {}'.format(host_id))
+                          ' a known allocation: {}. Ignoring.'.format(host_id))
             return
+        host_state = self._hosts_state[host_id]
 
         if msg['status'] == 'done':
             host_state['end_timestamp'] = time.time()
-            host_state['inauguration_done'] = True
-            logging.info('Host "{}" has inaugurated, congratulations.'.format(host_id))
-            self._add_allocation_record_to_db(host_id)
+            logging.info('Host "{}" has finished inauguration. Unsubscribing.'.format(host_id))
+            self._add_inauguration_record_to_db(host_id)
+            self._unregister_from_host(host_id)
         elif msg['status'] == 'progress' and \
                 msg['progress']['state'] == 'fetching':
             chain_count = msg['progress']['chainGetCount']
             self._hosts_state[host_id]['latest_chain_count'] = chain_count
 
     def _ubsubscribe_allocation(self, allocation_idx):
-        logging.info('Unsubscribing from allocation {}.'.format(allocation_idx))
-        try:
-            self._allocation_subscriptions.remove(allocation_idx)
-        except KeyError:
-            logging.info('Already ubsubscribed from allocation #{}.'.format(allocation_idx))
-
-        try:
-            self._subscription_mgr.unregisterForAllocation(allocation_idx)
-        except AssertionError:
-            logging.warning('Could not unsubscribe from allocation {}'.
-                            format(allocation_idx))
-
-        # Unregister all inaugurators
-        hosts_to_remove = set()
+        """Precondition: allocation is subscribed to."""
+        self._allocation_subscriptions.remove(allocation_idx)
+        self._subscription_mgr.unregisterForAllocation(allocation_idx)
         for host_id, host in self._hosts_state.iteritems():
             if host['allocation_idx'] == allocation_idx:
-                hosts_to_remove.add(host_id)
                 logging.info('Unsubscribing from inauguration events of "{}".'.format(host_id))
-                try:
-                    self._subscription_mgr.unregisterForInaugurator(host_id)
-                except AssertionError:
-                    logging.warning('Could not unregister from inauguration of '
-                                    ' "{}".'.format(allocation_idx))
-
-        for host_id in list(hosts_to_remove):
-            del self._hosts_state[host_id]
+                self._subscription_mgr.unregisterForInaugurator(host_id)
+                del self._hosts_state[host_id]
 
     def _is_allocation_dead(self, allocation_idx):
         result = self._rackattack_client.call('allocation__dead', id=allocation_idx)
@@ -110,14 +101,11 @@ class AllocationsHandler(threading.Thread):
             return False
         return result
 
-    def _are_all_inaugurations_done(self, allocation_idx):
-        for host in self._hosts_state.itervalues():
-            if not host['inauguration_done']:
-                return False
-        return True
-
     def _allocation_handler(self, message, allocation_idx):
         logging.debug('_allocation_handler: {} {}'.format(allocation_idx, message))
+        if allocation_idx not in self._allocation_subscriptions:
+            logging.info("Got an allocation status message for an unknown allocation. Ignoging.")
+            return
         if message.get('event', None) == "changedState":
             logging.info('Inauguration for allocation {} is over.'.format(allocation_idx))
             self._ubsubscribe_allocation(allocation_idx)
@@ -132,10 +120,10 @@ class AllocationsHandler(threading.Thread):
                           format(allocation_idx, message))
 
     def _pika_allocation_handler(self, idx, message):
-        self._tasks.put([self._allocation_handler, message, dict(allocation_idx=idx)])
+        self._tasks.put([None, self._allocation_handler, message, dict(allocation_idx=idx)])
 
     def _pika_all_allocations_handler(self, message):
-        self._tasks.put([self._all_allocations_handler, message, None], block=True)
+        self._tasks.put([None, self._all_allocations_handler, message, None], block=True)
 
     def _all_allocations_handler(self, message):
         logging.info('_all_allocations_handler: {}'.format(message))
@@ -167,7 +155,7 @@ class AllocationsHandler(threading.Thread):
             self._subscription_mgr.registerForInagurator(host_id, self._pika_inauguration_handler)
             logging.info("Subscribed.")
 
-    def _add_allocation_record_to_db(self, host_id):
+    def _add_inauguration_record_to_db(self, host_id):
         index = 'allocations_'
         doc_type = 'allocation_'
 
@@ -205,22 +193,20 @@ class AllocationsHandler(threading.Thread):
                       remote_store_count=remote_store_count,
                       majority_chain_type=majority_chain_type)
         record.update(state)
-        logging.info("Inserting to DB: {}".format(record))
 
-        collection = self._db.inaugurations
         try:
-            collection.insert_one(record)
+            self._db.insert(record)
         except Exception:
             print '\n\n\n\nError while inserting record \n\n\n\n'
 
 
 def create_connections():
     _, amqp_url, _ = os.environ['RACKATTACK_PROVIDER'].split("@@")
-    subscription_mgr = Subscribe(amqp_url)
+    subscription_mgr = subscribe.Subscribe(amqp_url)
+    return subscription_mgr
 
 
 def main(ready_event=None, stop_event=threading.Event()):
-    global subscription_mgr
     logger = logging.getLogger()
     logger.setLevel(logging.INFO)
     handler = logging.StreamHandler()
@@ -230,9 +216,10 @@ def main(ready_event=None, stop_event=threading.Event()):
     if ready_event is None:
         ready_event = threading.Event()
 
-    db = pymongo.MongoClient()
+    db = DB()
     logging.info("Initializing allocations handler....")
-    handler = AllocationsHandler(db, ready_event)
+    subscription_mgr = create_connections()
+    handler = AllocationsHandler(subscription_mgr, db, ready_event)
     handler.start()
     ready_event.wait()
     stop_event.wait()

@@ -30,6 +30,7 @@ class SubscribeMock(object):
         self.allocations_wait_conditions[idx].set()
 
     def unregisterForAllocation(self, idx):
+        del self.allocations_callbacks[idx]
         self.allocations_wait_conditions[idx].set()
 
     def registerForInagurator(self, host_id, callback):
@@ -43,8 +44,9 @@ class SubscribeMock(object):
 class Test(unittest.TestCase):
     def setUp(self):
         rackattack.tcp.subscribe.Subscribe = SubscribeMock
-        self.db = mock.Mock()
-        pymongo.MongoClient = mock.Mock(return_value=self.db)
+        SubscribeMock.instances = []
+        self._insert_to_db_mock = mock.Mock()
+        rackattack.stats.main_allocation_stats.DB.insert = self._insert_to_db_mock
         self.stop_event = threading.Event()
         self.ready_event = threading.Event()
         self.main_thread = threading.Thread(target=rackattack.stats.main_allocation_stats.main,
@@ -60,19 +62,63 @@ class Test(unittest.TestCase):
         instances = SubscribeMock.instances
         self.assertEquals(len(instances), 1)
         self.mgr = SubscribeMock.instances[0]
+        self.inaugurated_hosts = []
+        self.open_reported_allocations = dict()
 
     def tearDown(self):
         self.stop_event.set()
         self.main_thread.join()
 
     def test_one_allocation(self):
-        alloc_msg = self.generate_new_allocation_flow()
+        alloc_msg = self.generate_allocation_creation_message()
+        self.generate_allocation_creation_flow(alloc_msg)
         self.generate_inauguration_flow_for_all_hosts(alloc_msg)
         self.generate_allocation_death_flow(alloc_msg)
-        self.validate_alloc_in_db(alloc_msg)
+        self.validate_db()
+        self.validate_open_registerations()
 
-    def validate_alloc_in_db(self, alloc_msg):
-        self.assertTrue(self.db.inaugurations.insert_one)
+    def test_allocation_of_hosts_which_belong_to_another_alive_allocation(self):
+        alloc_msg = self.generate_allocation_creation_message()
+        self.generate_allocation_creation_flow(alloc_msg)
+        another_alloc_msg = self.generate_allocation_creation_message()
+        another_alloc_msg["allocated"] = alloc_msg["allocated"]
+        self.generate_allocation_creation_flow(another_alloc_msg)
+        self.generate_inauguration_flow_for_all_hosts(alloc_msg)
+        self.generate_allocation_death_flow(alloc_msg)
+        self.validate_db()
+        self.validate_open_registerations()
+
+    def test_inauguration_done_for_an_unallocated_node(self):
+        alloc_msg = self.generate_allocation_creation_message()
+        self.generate_allocation_creation_flow(alloc_msg)
+        self.generate_inauguration_flow_for_all_hosts(alloc_msg)
+        host_id = alloc_msg["allocated"].values()[0]
+        inauguration_callback = self.mgr.inaugurations_callbacks[host_id]
+        done_message = dict(id=host_id, status='done')
+        self.generate_allocation_death_flow(alloc_msg)
+        inauguration_callback(done_message)
+        self.validate_db()
+        self.validate_open_registerations()
+        # TODO: before validations of registerations, queue should be empty
+
+    def validate_open_registerations(self):
+        """Validate that there's no leak of registerations."""
+        subscribed_allocation_ids = set(self.mgr.allocations_callbacks)
+        expected_subscribed_allocation_ids = set(self.open_reported_allocations)
+        self.assertEquals(subscribed_allocation_ids, expected_subscribed_allocation_ids)
+
+    def validate_db(self):
+        """Validate contents of records in DB by comparing the insert-mock to the expected results.
+
+        This resets the insert_to_db_mock"""
+        args = self._insert_to_db_mock.call_args_list
+        while self.inaugurated_hosts:
+            expected_host_id = self.inaugurated_hosts.pop()
+            actual_inauguration_details = args.pop()[0][0]
+            actual_host_id = actual_inauguration_details['host_id']
+            self.assertEquals(expected_host_id, actual_host_id)
+        self.assertFalse(args)
+        self._insert_to_db_mock.reset_mock()
 
     def generate_inauguration_flow_for_all_hosts(self, alloc_msg, nr_progress_messages_per_host=10):
         for _, host_id in alloc_msg['allocated'].iteritems():
@@ -86,18 +132,21 @@ class Test(unittest.TestCase):
             self.mgr.inaugurations_callbacks[host_id](progress_message)
         done_message = dict(id=host_id, status='done')
         self.mgr.inaugurations_callbacks[host_id](done_message)
+        self.inaugurated_hosts.append(host_id)
 
     def generate_new_allocation_flow(self):
-        message = self.generate_allocation_creation_message()
-        self.send_allocation_message(message)
         return message
 
-    def generate_allocation_death_flow(self, message):
+    def generate_allocation_death_flow(self, message, was_allocation_creation_reported=True):
         allocation_id = message['allocationID']
         self.mgr.allocations_wait_conditions[allocation_id] = threading.Event()
         for _, host_id in message['allocated'].iteritems():
             self.mgr.inaugurations_register_wait_conditions[host_id] = threading.Event()
         self.mgr.allocations_callbacks[allocation_id](message=dict(event='changedState'))
+        if was_allocation_creation_reported:
+            del self.open_reported_allocations[allocation_id]
+        else:
+            self.assertNotIn(allocation_id, self.open_reporeted_allocations)
         logger.info("Waiting for unregisteration to allocation {}".format(allocation_id))
         self.mgr.allocations_wait_conditions[allocation_id].wait()
         logger.info("Unregisteration copmleted.")
@@ -106,12 +155,14 @@ class Test(unittest.TestCase):
             self.mgr.inaugurations_register_wait_conditions[host_id].wait()
             logger.info("Unegisteration copmleted.")
 
-    def send_allocation_message(self, message):
+    def generate_allocation_creation_flow(self, message):
         allocation_id = message['allocationID']
         self.mgr.allocations_wait_conditions[allocation_id] = threading.Event()
         for _, host_id in message['allocated'].iteritems():
             self.mgr.inaugurations_register_wait_conditions[host_id] = threading.Event()
         self.mgr.all_allocations_handler(message)
+        self.assertNotIn(allocation_id, self.open_reported_allocations)
+        self.open_reported_allocations[allocation_id] = message
         logger.info("Waiting for registeration to allocation {}...".format(allocation_id))
         self.mgr.allocations_wait_conditions[message['allocationID']].wait()
         logger.info("Registeration copmleted.")
