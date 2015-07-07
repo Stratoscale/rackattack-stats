@@ -63,7 +63,7 @@ class AllocationsHandler(threading.Thread):
             host_state = self._hosts_state[host_id]
         except KeyError:
             logging.error('Got an inauguration message for a host without'
-                            ' a known allocation: {}'.format(host_id))
+                          ' a known allocation: {}'.format(host_id))
             return
 
         if msg['status'] == 'done':
@@ -125,11 +125,11 @@ class AllocationsHandler(threading.Thread):
             logging.info("Rackattack provider says: %(message)s", dict(message=message['message']))
         elif message.get('event', None) == "withdrawn":
             logging.info("Rackattack provider widthdrew allocation: '%(message)s",
-                            dict(message=message['message']))
+                         dict(message=message['message']))
             self._ubsubscribe_allocation(allocation_idx)
         else:
             logging.error('_allocation_handler: WTF allocation_idx={}, message={}.'.
-                            format(allocation_idx, message))
+                          format(allocation_idx, message))
 
     def _pika_allocation_handler(self, idx, message):
         self._tasks.put([self._allocation_handler, message, dict(allocation_idx=idx)])
@@ -157,10 +157,10 @@ class AllocationsHandler(threading.Thread):
         for name, host_id in hosts.iteritems():
             # Update hosts state
             self._hosts_state[host_id] = dict(start_timestamp=time.time(),
-                                                name=name,
-                                                allocation_idx=idx,
-                                                inauguration_done=False,
-                                                **requirements[name])
+                                              name=name,
+                                              allocation_idx=idx,
+                                              inauguration_done=False,
+                                              **requirements[name])
             assert not set(info.keys()).intersection(set(self._hosts_state.keys()))
             self._hosts_state[host_id].update(info)
             logging.info("Subscribing to inaugurator events of: {}.".format(host_id))
@@ -212,6 +212,11 @@ class AllocationsHandler(threading.Thread):
             collection.insert_one(record)
         except Exception:
             print '\n\n\n\nError while inserting record \n\n\n\n'
+
+
+def create_connections():
+    _, amqp_url, _ = os.environ['RACKATTACK_PROVIDER'].split("@@")
+    subscription_mgr = Subscribe(amqp_url)
 
 
 def main(ready_event=None, stop_event=threading.Event()):

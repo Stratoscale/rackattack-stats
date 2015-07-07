@@ -13,6 +13,7 @@ logger = logging.getLogger()
 
 class SubscribeMock(object):
     instances = []
+
     def __init__(self, unused):
         self.all_allocations_handler = None
         self.allocations_callbacks = dict()
@@ -37,6 +38,7 @@ class SubscribeMock(object):
 
     def unregisterForInaugurator(self, host_id):
         self.inaugurations_register_wait_conditions[host_id].set()
+
 
 class Test(unittest.TestCase):
     def setUp(self):
@@ -79,7 +81,7 @@ class Test(unittest.TestCase):
     def generate_inauguration_flow_for_single_host(self, host_id, nr_progress_messages_per_host=10):
         for message_nr in xrange(nr_progress_messages_per_host):
             chain_get_count = (message_nr * 10, message_nr * 10)
-            progress_message = dict(id=host_id, status=dict(progress=dict(state='fetching', 
+            progress_message = dict(id=host_id, status=dict(progress=dict(state='fetching',
                                                                           chainGetCount=chain_get_count)))
             self.mgr.inaugurations_callbacks[host_id](progress_message)
         done_message = dict(id=host_id, status='done')
@@ -134,7 +136,6 @@ class Test(unittest.TestCase):
         message['allocated'] = allocated
         self.assertTrue(allocated)
         return message
-            
 
 if __name__ == '__main__':
     logger.setLevel(logging.INFO)
