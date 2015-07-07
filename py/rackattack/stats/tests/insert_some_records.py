@@ -43,8 +43,9 @@ class SubscribeMock(object):
 class Test(unittest.TestCase):
     def setUp(self):
         rackattack.tcp.subscribe.Subscribe = SubscribeMock
-        self.db = mock.Mock()
-        pymongo.MongoClient = mock.Mock(return_value=self.db)
+        SubscribeMock.instances = []
+        self._insert_to_db_mock = mock.Mock()
+        rackattack.stats.main_allocation_stats.AllocationsDB.insert = self._insert_to_db_mock
         self.stop_event = threading.Event()
         self.ready_event = threading.Event()
         self.main_thread = threading.Thread(target=rackattack.stats.main_allocation_stats.main,
@@ -66,13 +67,22 @@ class Test(unittest.TestCase):
         self.main_thread.join()
 
     def test_one_allocation(self):
-        alloc_msg = self.generate_new_allocation_flow()
+        alloc_msg = self.generate_allocation_creation_message()
+        self.send_allocation_message(alloc_msg)
         self.generate_inauguration_flow_for_all_hosts(alloc_msg)
         self.generate_allocation_death_flow(alloc_msg)
-        self.validate_alloc_in_db(alloc_msg)
+        self.validate_alloc_in_db(1)
 
-    def validate_alloc_in_db(self, alloc_msg):
-        self.assertTrue(self.db.inaugurations.insert_one)
+    def test_allocation_of_hosts_which_belong_to_another_alive_allocation(self):
+        alloc_msg = self.generate_allocation_creation_message()
+        self.send_allocation_message(alloc_msg)
+        self.send_allocation_message(alloc_msg)
+        self.generate_inauguration_flow_for_all_hosts(alloc_msg)
+        self.generate_allocation_death_flow(alloc_msg)
+        self.validate_alloc_in_db(1)
+
+    def validate_alloc_in_db(self, nr_allocations):
+        self.assertEquals(nr_allocations, self._insert_to_db_mock.call_count)
 
     def generate_inauguration_flow_for_all_hosts(self, alloc_msg, nr_progress_messages_per_host=10):
         for _, host_id in alloc_msg['allocated'].iteritems():
@@ -88,8 +98,6 @@ class Test(unittest.TestCase):
         self.mgr.inaugurations_callbacks[host_id](done_message)
 
     def generate_new_allocation_flow(self):
-        message = self.generate_allocation_creation_message()
-        self.send_allocation_message(message)
         return message
 
     def generate_allocation_death_flow(self, message):
