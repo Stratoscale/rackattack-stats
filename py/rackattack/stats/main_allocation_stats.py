@@ -30,12 +30,12 @@ class AllocationsHandler(threading.Thread):
         self._hosts_state = dict()
         self._db = db
         self._subscription_mgr = subscription_mgr
-        logging.info('Subscribing to all hosts allocations...')
+        logging.info('Subscribing to all hosts allocations.')
         subscription_mgr.registerForAllAllocations(self._pika_all_allocations_handler)
-        logging.info('Subscribed.')
         self._allocation_subscriptions = set()
         self._tasks = Queue.Queue()
         self.ready_event = ready_event
+        self._latest_allocation_idx = None
         threading.Thread.__init__(self)
 
     def run(self):
@@ -54,17 +54,17 @@ class AllocationsHandler(threading.Thread):
             if finishedEvent is not None:
                 finishedEvent.set()
 
-    def stop(self):
+    def stop(self, remove_pending_events=False):
         finishedEvent = threading.Event()
+        if remove_pending_events:
+            while not self._tasks.empty():
+                self._tasks.get(block=False)
         self._tasks.put([finishedEvent, None, None, None])
-        finishedEvent.wait()
+        if not remove_pending_events:
+            finishedEvent.wait()
 
     def _pika_inauguration_handler(self, message):
         self._tasks.put([None, self._inauguration_handler, message, None])
-
-    def _unregister_from_host(self, host_id):
-        del self._hosts_state[host_id]
-        self._subscription_mgr.unregisterForInaugurator(host_id)
 
     def _inauguration_handler(self, msg):
         logging.debug('Inaugurator message: {}'.format(msg))
@@ -79,7 +79,8 @@ class AllocationsHandler(threading.Thread):
             host_state['end_timestamp'] = time.time()
             logging.info('Host "{}" has finished inauguration. Unsubscribing.'.format(host_id))
             self._add_inauguration_record_to_db(host_id)
-            self._unregister_from_host(host_id)
+            self._subscription_mgr.unregisterForInaugurator(host_id)
+            self._hosts_state[host_id]["inauguration_done"] = True
         elif msg['status'] == 'progress' and \
                 msg['progress']['state'] == 'fetching':
             chain_count = msg['progress']['chainGetCount']
@@ -89,11 +90,19 @@ class AllocationsHandler(threading.Thread):
         """Precondition: allocation is subscribed to."""
         self._allocation_subscriptions.remove(allocation_idx)
         self._subscription_mgr.unregisterForAllocation(allocation_idx)
-        for host_id, host in self._hosts_state.iteritems():
-            if host['allocation_idx'] == allocation_idx:
+        allocated_hosts = [host_id for host_id, host in self._hosts_state.iteritems() if \
+                           host['allocation_idx'] == allocation_idx]
+        uninaugurated_hosts = [host_id for host_id in allocated_hosts if \
+                               not self._hosts_state[host_id]["inauguration_done"]]
+        if uninaugurated_hosts:
+            logging.info("Inauguration stage for allocation {} ended without finishing inauguration "
+                         "of the following hosts: {}.".format(allocation_idx,
+                                                              ','.join(uninauguratedHosts)))
+            for host_id in uninauguratedHosts:
                 logging.info('Unsubscribing from inauguration events of "{}".'.format(host_id))
                 self._subscription_mgr.unregisterForInaugurator(host_id)
-                del self._hosts_state[host_id]
+        for host in allocated_hosts:
+            del self._hosts_state[host]
 
     def _is_allocation_dead(self, allocation_idx):
         result = self._rackattack_client.call('allocation__dead', id=allocation_idx)
@@ -104,10 +113,10 @@ class AllocationsHandler(threading.Thread):
     def _allocation_handler(self, message, allocation_idx):
         logging.debug('_allocation_handler: {} {}'.format(allocation_idx, message))
         if allocation_idx not in self._allocation_subscriptions:
-            logging.info("Got an allocation status message for an unknown allocation. Ignoging.")
+            logging.info("Got a status message for an unknown allocation: {}. Ignoging.".format(message))
             return
         if message.get('event', None) == "changedState":
-            logging.info('Inauguration for allocation {} is over.'.format(allocation_idx))
+            logging.info('Inauguration stage for allocation {} is over.'.format(allocation_idx))
             self._ubsubscribe_allocation(allocation_idx)
         elif message.get('event', None) == "providerMessage":
             logging.info("Rackattack provider says: %(message)s", dict(message=message['message']))
@@ -116,8 +125,8 @@ class AllocationsHandler(threading.Thread):
                          dict(message=message['message']))
             self._ubsubscribe_allocation(allocation_idx)
         else:
-            logging.error('_allocation_handler: WTF allocation_idx={}, message={}.'.
-                          format(allocation_idx, message))
+            logging.error("Unrecognized message: {}. Quitting.".format(message))
+            self.stop()
 
     def _pika_allocation_handler(self, idx, message):
         self._tasks.put([None, self._allocation_handler, message, dict(allocation_idx=idx)])
@@ -126,13 +135,18 @@ class AllocationsHandler(threading.Thread):
         self._tasks.put([None, self._all_allocations_handler, message, None], block=True)
 
     def _all_allocations_handler(self, message):
-        logging.info('_all_allocations_handler: {}'.format(message))
-        global subscription_mgr, subscribe, state
         if message['event'] == 'requested':
             return
         assert message['event'] == 'created'
-
+        logging.info('New allocation: {}'.format(message))
         idx = message['allocationID']
+        if self._latest_allocation_idx is None:
+            self._latest_allocation_idx = idx
+        elif idx < self._latest_allocation_idx:
+            logging.error("Got an allocation index {} which is smaller than the previous one ({}) "
+                          "(could RackAttack have been restarted?). Quitting.".format(idx,
+                          self._latest_allocation_idx))
+            self.stop(remove_pending_events=True)
         info = message['allocationInfo']
         requirements = message['requirements']
         hosts = message['allocated']
