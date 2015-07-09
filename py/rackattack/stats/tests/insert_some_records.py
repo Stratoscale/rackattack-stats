@@ -73,6 +73,7 @@ class Test(unittest.TestCase):
         self.assertEquals(len(instances), 1)
         self.mgr = SubscribeMock.instances[0]
         self.expected_reported_inaugurated_hosts = []
+        self.expected_reported_uninaugurated_hosts = []
         self.uninaugurated_hosts_of_open_reported_allocations = dict()
 
     def tearDown(self):
@@ -130,7 +131,7 @@ class Test(unittest.TestCase):
         self.generate_allocation_creation_flow(alloc_msg)
         inaugurated_hosts_in_first_allocation = ("charlie", "delta", "golf", "hotel", "india", "juliet")
         for host in inaugurated_hosts_in_first_allocation:
-            self.generate_inauguration_flow_for_single_host(host)
+            self.generate_inauguration_flow_for_single_host(host, alloc_msg["allocationID"])
         hosts_on_both_allocations = original_hosts_pool[4:4 + nr_hosts_in_allocation]
         self.available_hosts = hosts_on_both_allocations + self.available_hosts
         another_alloc_msg = self.generate_allocation_creation_message(nr_hosts_in_allocation)
@@ -141,7 +142,7 @@ class Test(unittest.TestCase):
         self.wait_for_allocation_unregisteration(alloc_msg)
         inaugurated_hosts_in_second_allocation = ("golf", "hotel", "kilo", "lima", "oscar", "papa")
         for host in inaugurated_hosts_in_second_allocation:
-            self.generate_inauguration_flow_for_single_host(host)
+            self.generate_inauguration_flow_for_single_host(host, another_alloc_msg["allocationID"])
         self.generate_allocation_death_flow(another_alloc_msg)
         self.validate_db()
         self.validate_open_registerations()
@@ -205,23 +206,29 @@ class Test(unittest.TestCase):
         """Validate contents of records in DB by comparing the insert-mock to the expected results.
 
         This resets the insert_to_db_mock"""
+        self.tested.finish_all_commands_in_queue()
         args = self._insert_to_db_mock.call_args_list
-        while self.expected_reported_inaugurated_hosts:
-            expected_host_id = self.expected_reported_inaugurated_hosts.pop(0)
+        while args:
             actual_inauguration_details = args.pop(0)[0][0]
+            if actual_inauguration_details["inauguration_done"]:
+                expected_host_id = self.expected_reported_inaugurated_hosts.pop(0)
+            else:
+                expected_host_id = self.expected_reported_uninaugurated_hosts.pop(0)
             actual_host_id = actual_inauguration_details['host_id']
             self.assertEquals(expected_host_id, actual_host_id)
-        self.assertFalse(args)
+        self.assertFalse(self.expected_reported_uninaugurated_hosts)
+        self.assertFalse(self.expected_reported_inaugurated_hosts)
         self._insert_to_db_mock.reset_mock()
 
     def generate_inauguration_flow_for_all_hosts(self, alloc_msg, nr_progress_messages_per_host=10,
                                                  inauguration_report_expected=True):
         for _, host_id in alloc_msg['allocated'].iteritems():
             self.generate_inauguration_flow_for_single_host(
-                host_id, nr_progress_messages_per_host,
+                host_id, alloc_msg["allocationID"], nr_progress_messages_per_host,
                 inauguration_report_expected=inauguration_report_expected)
 
-    def generate_inauguration_flow_for_single_host(self, host_id, nr_progress_messages_per_host=10,
+    def generate_inauguration_flow_for_single_host(self, host_id, allocation_id,
+                                                   nr_progress_messages_per_host=10,
                                                    inauguration_report_expected=True):
         for message_nr in xrange(nr_progress_messages_per_host):
             chain_get_count = (message_nr * 10, message_nr * 10)
@@ -235,7 +242,7 @@ class Test(unittest.TestCase):
         done_message = dict(id=host_id, status='done')
         self.mgr.inaugurations_callbacks[host_id](done_message)
         if inauguration_report_expected:
-            self.wait_for_inauguration_unregisteration(host_id)
+            self.wait_for_inauguration_unregisteration(host_id, allocation_id)
             self.expected_reported_inaugurated_hosts.append(host_id)
 
     def generate_new_allocation_flow(self):
@@ -270,13 +277,17 @@ class Test(unittest.TestCase):
             self.mgr.inaugurations_register_wait_conditions[host_id].wait()
             logger.info("Unegisteration completed.")
         if was_allocation_creation_reported:
+            uninaugurated = self.uninaugurated_hosts_of_open_reported_allocations[allocation_id]
+            uninaugurated.sort()
+            self.expected_reported_uninaugurated_hosts.extend(uninaugurated)
             del self.uninaugurated_hosts_of_open_reported_allocations[allocation_id]
         else:
             self.assertNotIn(allocation_id, self.open_reporeted_allocations)
 
-    def wait_for_inauguration_unregisteration(self, host_id):
+    def wait_for_inauguration_unregisteration(self, host_id, allocation_id):
         logger.info("Waiting for unregisteration to inauguration of {}...".format(host_id))
         self.mgr.inaugurations_register_wait_conditions[host_id].wait()
+        self.uninaugurated_hosts_of_open_reported_allocations[allocation_id].remove(host_id)
         logger.info("Unegisteration completed.")
 
     def generate_allocation_creation_flow(self, alloc_msg):

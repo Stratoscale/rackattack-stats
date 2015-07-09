@@ -57,6 +57,11 @@ class AllocationsHandler(threading.Thread):
             while not self._tasks.empty():
                 self._tasks.get(block=False)
         self._tasks.put([finishedEvent, None, None, None])
+    
+    def finish_all_commands_in_queue(self):
+        finishedEvent = threading.Event()
+        self._tasks.put([finishedEvent, lambda *a: None, None, None])
+        finishedEvent.wait()
 
     def _pika_inauguration_handler(self, message):
         self._tasks.put([None, self._inauguration_handler, message, None])
@@ -73,9 +78,9 @@ class AllocationsHandler(threading.Thread):
         if msg['status'] == 'done':
             host_state['end_timestamp'] = time.time()
             logging.info('Host "{}" has finished inauguration. Unsubscribing.'.format(host_id))
+            self._hosts_state[host_id]["inauguration_done"] = True
             self._add_inauguration_record_to_db(host_id)
             self._subscription_mgr.unregisterForInaugurator(host_id)
-            self._hosts_state[host_id]["inauguration_done"] = True
         elif msg['status'] == 'progress' and \
                 msg['progress']['state'] == 'fetching':
             chain_count = msg['progress']['chainGetCount']
@@ -93,8 +98,10 @@ class AllocationsHandler(threading.Thread):
             logging.info("Inauguration stage for allocation {} ended without finishing inauguration "
                          "of the following hosts: {}.".format(allocation_idx,
                                                               ','.join(uninaugurated_hosts)))
+            uninaugurated_hosts.sort()
             for host_id in uninaugurated_hosts:
                 logging.info('Unsubscribing from inauguration events of "{}".'.format(host_id))
+                self._add_inauguration_record_to_db(host_id)
                 self._subscription_mgr.unregisterForInaugurator(host_id)
         for host in allocated_hosts:
             del self._hosts_state[host]
@@ -204,18 +211,17 @@ class AllocationsHandler(threading.Thread):
             if remote_store_count is not None and \
                     local_store_count < remote_store_count:
                 majority_chain_type = 'remote'
-
-        inauguration_period_length = state['end_timestamp'] - state['start_timestamp']
         id = "%d%03d%05d" % (state['start_timestamp'], state['allocation_idx'],
                              int(str(abs(hash(host_id)))[:5]))
 
         record = dict(timestamp=record_datetime,
                       _timestamp=record_datetime,
                       host_id=host_id,
-                      inauguration_period_length=inauguration_period_length,
                       local_store_count=local_store_count,
                       remote_store_count=remote_store_count,
                       majority_chain_type=majority_chain_type)
+        if state["inauguration_done"]:
+            record["inauguration_period_length"] = state['end_timestamp'] - state['start_timestamp']
         record.update(state)
 
         try:
