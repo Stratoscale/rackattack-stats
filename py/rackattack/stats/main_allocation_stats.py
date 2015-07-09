@@ -86,19 +86,19 @@ class AllocationsHandler(threading.Thread):
             chain_count = msg['progress']['chainGetCount']
             self._hosts_state[host_id]['latest_chain_count'] = chain_count
 
-    def _ubsubscribe_allocation(self, allocation_idx):
+    def _unsubscribe_allocation(self, allocation_idx):
         """Precondition: allocation is subscribed to."""
         self._allocation_subscriptions.remove(allocation_idx)
         self._subscription_mgr.unregisterForAllocation(allocation_idx)
-        allocated_hosts = [host_id for host_id, host in self._hosts_state.iteritems() if \
+        allocated_hosts = [host_id for host_id, host in self._hosts_state.iteritems() if
                            host['allocation_idx'] == allocation_idx]
-        uninaugurated_hosts = [host_id for host_id in allocated_hosts if \
+        uninaugurated_hosts = [host_id for host_id in allocated_hosts if
                                not self._hosts_state[host_id]["inauguration_done"]]
         if uninaugurated_hosts:
             logging.info("Inauguration stage for allocation {} ended without finishing inauguration "
                          "of the following hosts: {}.".format(allocation_idx,
-                                                              ','.join(uninauguratedHosts)))
-            for host_id in uninauguratedHosts:
+                                                              ','.join(uninaugurated_hosts)))
+            for host_id in uninaugurated_hosts:
                 logging.info('Unsubscribing from inauguration events of "{}".'.format(host_id))
                 self._subscription_mgr.unregisterForInaugurator(host_id)
         for host in allocated_hosts:
@@ -117,13 +117,13 @@ class AllocationsHandler(threading.Thread):
             return
         if message.get('event', None) == "changedState":
             logging.info('Inauguration stage for allocation {} is over.'.format(allocation_idx))
-            self._ubsubscribe_allocation(allocation_idx)
+            self._unsubscribe_allocation(allocation_idx)
         elif message.get('event', None) == "providerMessage":
             logging.info("Rackattack provider says: %(message)s", dict(message=message['message']))
         elif message.get('event', None) == "withdrawn":
             logging.info("Rackattack provider widthdrew allocation: '%(message)s",
                          dict(message=message['message']))
-            self._ubsubscribe_allocation(allocation_idx)
+            self._unsubscribe_allocation(allocation_idx)
         else:
             logging.error("Unrecognized message: {}. Quitting.".format(message))
             self.stop()
@@ -144,8 +144,8 @@ class AllocationsHandler(threading.Thread):
             self._latest_allocation_idx = idx
         elif idx < self._latest_allocation_idx:
             logging.error("Got an allocation index {} which is smaller than the previous one ({}) "
-                          "(could RackAttack have been restarted?). Quitting.".format(idx,
-                          self._latest_allocation_idx))
+                          "(could RackAttack have been restarted?). Quitting."
+                          .format(idx, self._latest_allocation_idx))
             self.stop(remove_pending_events=True)
         info = message['allocationInfo']
         requirements = message['requirements']
@@ -156,7 +156,17 @@ class AllocationsHandler(threading.Thread):
         self._subscription_mgr.registerForAllocation(idx, allocation_handler)
         logging.info('Susbcribed')
         self._allocation_subscriptions.add(idx)
+        allocation_unsubscribed_from_due_to_new_allocation = set()
         for name, host_id in hosts.iteritems():
+            if host_id in self._hosts_state:
+                existing_allocation = self._hosts_state[host_id]["allocation_idx"]
+                assert existing_allocation not in allocation_unsubscribed_from_due_to_new_allocation
+                logging.warn("Allocation {} was allocated with a host which is already used by "
+                             "another allocation ({}). Unsubscribing from the latter first..."
+                             .format(idx, existing_allocation))
+                self._unsubscribe_allocation(existing_allocation)
+                allocation_unsubscribed_from_due_to_new_allocation.add(existing_allocation)
+                assert host_id not in self._hosts_state
             # Update hosts state
             self._hosts_state[host_id] = dict(start_timestamp=time.time(),
                                               name=name,
