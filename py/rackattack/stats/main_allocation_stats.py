@@ -38,7 +38,8 @@ class AllocationsHandler(threading.Thread):
     def run(self):
         self._ready_event.set()
         while True:
-            logging.info('Waiting for a new event...')
+            logging.info('Waiting for a new event (current number of monitored allocations: {})...'
+                         .format(len(self._allocation_subscriptions)))
             finishedEvent, callback, message, args = self._tasks.get(block=True)
             if callback is None:
                 logging.info('Finished handling events.')
