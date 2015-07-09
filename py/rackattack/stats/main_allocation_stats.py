@@ -10,6 +10,7 @@ from functools import partial
 from rackattack.tcp import subscribe
 
 
+MAX_NR_ALLOCATIONS = 100
 TIMEZONE = 'Asia/Jerusalem'
 
 
@@ -26,7 +27,7 @@ class DB(object):
 
 
 class AllocationsHandler(threading.Thread):
-    def __init__(self, subscription_mgr, db, ready_event):
+    def __init__(self, subscription_mgr, db, ready_event, stop_event):
         self._hosts_state = dict()
         self._db = db
         self._subscription_mgr = subscription_mgr
@@ -34,12 +35,13 @@ class AllocationsHandler(threading.Thread):
         subscription_mgr.registerForAllAllocations(self._pika_all_allocations_handler)
         self._allocation_subscriptions = set()
         self._tasks = Queue.Queue()
-        self.ready_event = ready_event
+        self._ready_event = ready_event
         self._latest_allocation_idx = None
+        self._stop_event = stop_event
         threading.Thread.__init__(self)
 
     def run(self):
-        self.ready_event.set()
+        self._ready_event.set()
         while True:
             logging.info('Waiting for a new event...')
             finishedEvent, callback, message, args = self._tasks.get(block=True)
@@ -60,8 +62,6 @@ class AllocationsHandler(threading.Thread):
             while not self._tasks.empty():
                 self._tasks.get(block=False)
         self._tasks.put([finishedEvent, None, None, None])
-        if not remove_pending_events:
-            finishedEvent.wait()
 
     def _pika_inauguration_handler(self, message):
         self._tasks.put([None, self._inauguration_handler, message, None])
@@ -147,6 +147,11 @@ class AllocationsHandler(threading.Thread):
                           "(could RackAttack have been restarted?). Quitting."
                           .format(idx, self._latest_allocation_idx))
             self.stop(remove_pending_events=True)
+            return
+        if len(self._allocation_subscriptions) == MAX_NR_ALLOCATIONS:
+            logging.error("Something has gone wrong; Too many open allocations. Quitting")
+            self.stop(remove_pending_events=True)
+            return
         info = message['allocationInfo']
         requirements = message['requirements']
         hosts = message['allocated']
@@ -219,6 +224,7 @@ class AllocationsHandler(threading.Thread):
         record.update(state)
 
         try:
+            logging.info("Inserting record to DB: {}".format(record))
             self._db.insert(record)
         except Exception:
             print '\n\n\n\nError while inserting record \n\n\n\n'
@@ -243,9 +249,10 @@ def main(ready_event=None, stop_event=threading.Event()):
     db = DB()
     logging.info("Initializing allocations handler....")
     subscription_mgr = create_connections()
-    handler = AllocationsHandler(subscription_mgr, db, ready_event)
+    handler = AllocationsHandler(subscription_mgr, db, ready_event, stop_event)
     handler.start()
     ready_event.wait()
+    logging.info("Allocations handler is ready.")
     stop_event.wait()
     handler.stop()
     handler.join()
