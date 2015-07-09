@@ -5,8 +5,8 @@ import logging
 import unittest
 import threading
 import rackattack
-import rackattack.tcp.subscribe
-import rackattack.stats.main_allocation_stats
+from rackattack.tcp import subscribe
+from rackattack.stats.main_allocation_stats import AllocationsHandler
 
 
 logger = logging.getLogger()
@@ -46,8 +46,7 @@ class Test(unittest.TestCase):
     def setUp(self):
         rackattack.tcp.subscribe.Subscribe = SubscribeMock
         SubscribeMock.instances = []
-        self._insert_to_db_mock = mock.Mock()
-        rackattack.stats.main_allocation_stats.DB.insert = self._insert_to_db_mock
+        self.db = mock.Mock()
         self.stop_event = threading.Event()
         self.ready_event = threading.Event()
         self.main_thread = threading.Thread(target=rackattack.stats.main_allocation_stats.main,
@@ -63,10 +62,13 @@ class Test(unittest.TestCase):
         self.assertEquals(len(self.available_hosts), len(set(self.available_hosts)))
         logger.info("Starting main-allocation-stats's main thread...")
         logger.handlers = list()
-        self.main_thread.start()
-        logger.info("Waiting for main-allocation-stats' thread to be ready...")
+        subscription_mgr = subscribe.Subscribe("asdasd@@asdasd@@asdasd")
+        self.tested = AllocationsHandler(subscription_mgr, self.db, self.ready_event, self.stop_event)
+        logger.info("Waiting for allocation handler thread to be ready...")
+        self.tested.start()
         self.ready_event.wait()
-        logger.info("Thread is ready. Inoking callbacks...")
+        logger.info("Thread is ready.")
+        self._insert_to_db_mock = self.db.inaugurations.insert
         instances = SubscribeMock.instances
         self.assertEquals(len(instances), 1)
         self.mgr = SubscribeMock.instances[0]
@@ -74,8 +76,8 @@ class Test(unittest.TestCase):
         self.uninaugurated_hosts_of_open_reported_allocations = dict()
 
     def tearDown(self):
-        self.stop_event.set()
-        self.main_thread.join()
+        self.tested.stop()
+        self.tested.join()
 
     def test_one_allocation(self):
         alloc_msg = self.generate_allocation_creation_message(nr_hosts=10)

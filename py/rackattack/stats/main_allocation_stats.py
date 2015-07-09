@@ -21,11 +21,6 @@ def datetime_from_timestamp(timestamp):
     return datetime_now
 
 
-class DB(object):
-    def insert_inauguration(self, record):
-        logging.info("Inserting to DB: {}".format(record))
-
-
 class AllocationsHandler(threading.Thread):
     def __init__(self, subscription_mgr, db, ready_event, stop_event):
         self._hosts_state = dict()
@@ -225,9 +220,11 @@ class AllocationsHandler(threading.Thread):
 
         try:
             logging.info("Inserting record to DB: {}".format(record))
-            self._db.insert(record)
+            self._db.inaugurations.insert(record)
         except Exception:
-            print '\n\n\n\nError while inserting record \n\n\n\n'
+            logging.exception("Inauguration DB record insertion failed. Quitting.")
+            self.stop()
+            return
 
 
 def create_connections():
@@ -236,17 +233,21 @@ def create_connections():
     return subscription_mgr
 
 
-def main(ready_event=None, stop_event=threading.Event()):
+def configure_logger():
     logger = logging.getLogger()
     logger.setLevel(logging.INFO)
     handler = logging.StreamHandler()
     handler.setLevel(logging.DEBUG)
     logger.addHandler(handler)
 
+
+def main(ready_event=None, stop_event=threading.Event()):
+    configure_logger()
+
     if ready_event is None:
         ready_event = threading.Event()
 
-    db = DB()
+    db = pymongo.MongoClient().rackattack_stats
     logging.info("Initializing allocations handler....")
     subscription_mgr = create_connections()
     handler = AllocationsHandler(subscription_mgr, db, ready_event, stop_event)
