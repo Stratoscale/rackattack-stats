@@ -5,7 +5,7 @@ EGG_BASENAME = ${MODULE_NAME}.egg
 SERVICES_FILENAMES = $(shell find -maxdepth 1 -name "*.service" | sed 's/.\///g')
 PYTHON_FILES = $(shell find py -name "*.py")
 PYTHON_FILES_PATH_FROM_PY_ROOT = $(shell find py -name "*.py" | cut -d "/" -f 2-)
-SERVICES_DEPLOYMENT_PATH = /usr/lib/systemd/system/
+SERVICES_DEPLOYMENT_PATH = $(shell python get_system_setting.py serviceFilesDirPath)
 
 all: check_convention build
 
@@ -31,7 +31,7 @@ install: build/$(EGG_BASENAME)
 	-sudo mkdir /usr/share/$(MODULE_NAME)
 	sudo cp build/$(EGG_BASENAME) /usr/share/$(MODULE_NAME)
 	for _service in ${SERVICES_FILENAMES} ; do \
-		sudo sh -c "sed 's/<RAP_URI>/${RAP_URI}/g' $$_service | sed 's/<PYTHONPATH>/\/usr\/share\/$(MODULE_NAME)\/$(EGG_BASENAME)/g' > '${SERVICES_DEPLOYMENT_PATH}$$_service'" ; \
+		sudo sh -c "sed 's/<RAP_URI>/${RAP_URI}/g' $$_service | sed 's/<PYTHONPATH>/\/usr\/share\/$(MODULE_NAME)\/$(EGG_BASENAME)/g' > '${SERVICES_DEPLOYMENT_PATH}/$$_service'" ; \
 		sudo systemctl enable $$_service ; \
 	done
 
