@@ -1,8 +1,6 @@
 [Unit]
 Description=This monitors RackAttack's hosts status and updates the DB (elasticsearch) with it
 After=syslog.target network.target
-BindsTo=elasticsearch.service
-After=elasticsearch.service
 
 [Service]
 Type=simple
