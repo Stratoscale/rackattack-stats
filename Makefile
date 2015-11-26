@@ -25,7 +25,6 @@ build/${EGG_BASENAME}: ${PYTHON_FILES}
 -include build/$(EGG_BASENAME).dep
 
 install: build/$(EGG_BASENAME)
-	(if [ x`systemctl list-units | grep elasticsearch` == x ]; then echo "ElasticSearch must be installed in order to proceed."; exit 1; fi )
 	-for _service in ${SERVICES_FILENAMES} ; do \
 		sudo systemctl stop $$_service ; \
 	done
