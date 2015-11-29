@@ -34,6 +34,7 @@ class AllocationsHandler(threading.Thread):
         self._ready_event = ready_event
         self._latest_allocation_idx = None
         self._stop_event = stop_event
+        self._host_indices = list()
         threading.Thread.__init__(self)
 
     def run(self):
@@ -59,7 +60,7 @@ class AllocationsHandler(threading.Thread):
             while not self._tasks.empty():
                 self._tasks.get(block=False)
         self._tasks.put([finishedEvent, None, None, None])
-    
+
     def finish_all_commands_in_queue(self):
         finishedEvent = threading.Event()
         self._tasks.put([finishedEvent, lambda *a: None, None, None])
@@ -212,8 +213,7 @@ class AllocationsHandler(threading.Thread):
             if remote_store_count is not None and \
                     local_store_count < remote_store_count:
                 majority_chain_type = 'remote'
-        id = "%d%03d%05d" % (state['start_timestamp'], state['allocation_idx'],
-                             int(str(abs(hash(host_id)))[:5]))
+        id = "%d%03d%05d" % (state['start_timestamp'], state['allocation_idx'], self._hostIndex(host_id))
 
         record = dict(date=record_datetime,
                       host_id=host_id,
@@ -231,6 +231,11 @@ class AllocationsHandler(threading.Thread):
             logging.exception("Inauguration DB record insertion failed. Quitting.")
             self.stop()
             return
+
+    def _hostIndex(self, hostID):
+        if hostID not in self._host_indices:
+            self._host_indices.append(hostID)
+        return self._host_indices.index(hostID)
 
 
 def create_connections():
