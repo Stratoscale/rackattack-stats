@@ -1,6 +1,5 @@
 import mock
 import copy
-import pymongo
 import logging
 import unittest
 import threading
@@ -46,7 +45,7 @@ class Test(unittest.TestCase):
     def setUp(self):
         rackattack.tcp.subscribe.Subscribe = SubscribeMock
         SubscribeMock.instances = []
-        self.db = mock.Mock()
+        self._db = mock.Mock()
         self.stop_event = threading.Event()
         self.ready_event = threading.Event()
         self.main_thread = threading.Thread(target=rackattack.stats.main_allocation_stats.main,
@@ -63,12 +62,12 @@ class Test(unittest.TestCase):
         logger.info("Starting main-allocation-stats's main thread...")
         logger.handlers = list()
         subscription_mgr = subscribe.Subscribe("asdasd@@asdasd@@asdasd")
-        self.tested = AllocationsHandler(subscription_mgr, self.db, self.ready_event, self.stop_event)
+        self.tested = AllocationsHandler(subscription_mgr, self._db, self.ready_event, self.stop_event)
         logger.info("Waiting for allocation handler thread to be ready...")
         self.tested.start()
         self.ready_event.wait()
         logger.info("Thread is ready.")
-        self._insert_to_db_mock = self.db.inaugurations.insert
+        self._insert_to_db_mock = self._db.create
         instances = SubscribeMock.instances
         self.assertEquals(len(instances), 1)
         self.mgr = SubscribeMock.instances[0]
@@ -209,7 +208,7 @@ class Test(unittest.TestCase):
         self.tested.finish_all_commands_in_queue()
         args = self._insert_to_db_mock.call_args_list
         while args:
-            actual_inauguration_details = args.pop(0)[0][0]
+            actual_inauguration_details = args.pop(0)[1]["body"]
             if actual_inauguration_details["inauguration_done"]:
                 expected_host_id = self.expected_reported_inaugurated_hosts.pop(0)
             else:
@@ -327,7 +326,7 @@ class Test(unittest.TestCase):
         return message
 
 if __name__ == '__main__':
-    logger.setLevel(logging.INFO)
+    logger.setLevel(logging.CRITICAL)
     handler = logging.StreamHandler()
     handler.setLevel(logging.DEBUG)
     logger.addHandler(handler)

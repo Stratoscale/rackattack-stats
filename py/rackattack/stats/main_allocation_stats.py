@@ -3,9 +3,9 @@ import time
 import pytz
 import Queue
 import logging
-import pymongo
 import datetime
 import threading
+import elasticsearch
 from functools import partial
 from rackattack.tcp import subscribe
 
@@ -68,7 +68,6 @@ class AllocationsHandler(threading.Thread):
         self._tasks.put([None, self._inauguration_handler, message, None])
 
     def _inauguration_handler(self, msg):
-        logging.debug('Inaugurator message: {}'.format(msg))
         host_id = msg['id']
         if host_id not in self._hosts_state:
             logging.error('Got an inauguration message for a host without'
@@ -82,8 +81,8 @@ class AllocationsHandler(threading.Thread):
             self._hosts_state[host_id]["inauguration_done"] = True
             self._add_inauguration_record_to_db(host_id)
             self._subscription_mgr.unregisterForInaugurator(host_id)
-        elif msg['status'] == 'progress' and \
-                msg['progress']['state'] == 'fetching':
+        elif msg['status'] == 'progress' and msg['progress']['state'] == 'fetching':
+            logging.info('Progress message for {}'.format(host_id))
             chain_count = msg['progress']['chainGetCount']
             self._hosts_state[host_id]['latest_chain_count'] = chain_count
 
@@ -215,8 +214,7 @@ class AllocationsHandler(threading.Thread):
         id = "%d%03d%05d" % (state['start_timestamp'], state['allocation_idx'],
                              int(str(abs(hash(host_id)))[:5]))
 
-        record = dict(timestamp=record_datetime,
-                      _timestamp=record_datetime,
+        record = dict(date=record_datetime,
                       host_id=host_id,
                       local_store_count=local_store_count,
                       remote_store_count=remote_store_count,
@@ -226,8 +224,8 @@ class AllocationsHandler(threading.Thread):
         record.update(state)
 
         try:
-            logging.info("Inserting record to DB: {}".format(record))
-            self._db.inaugurations.insert(record)
+            logging.info("Inserting inauguration to DB: {}".format(record))
+            self._db.create(index='inaugurations', doc_type='inauguration', body=record, id=id)
         except Exception:
             logging.exception("Inauguration DB record insertion failed. Quitting.")
             self.stop()
@@ -254,7 +252,7 @@ def main(ready_event=None, stop_event=threading.Event()):
     if ready_event is None:
         ready_event = threading.Event()
 
-    db = pymongo.MongoClient().rackattack_stats
+    db = elasticsearch.Elasticsearch([{"host": "10.0.1.66", "port": 9200}])
     logging.info("Initializing allocations handler....")
     subscription_mgr = create_connections()
     handler = AllocationsHandler(subscription_mgr, db, ready_event, stop_event)

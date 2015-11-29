@@ -18,7 +18,7 @@ unittest:
 .PHONY: build
 build: build/$(EGG_BASENAME)
 
-build/${EGG_BASENAME}: ${PYTHON_FILES}
+build/${EGG_BASENAME}: validate_requirements ${PYTHON_FILES}
 	mkdir -p $(@D)
 	cd py; python -m upseto.packegg --entryPoint ${PYTHON_FILES_PATH_FROM_PY_ROOT} --output=../$@ --createDeps=../$@.dep --compile_pyc --joinPythonNamespaces
 
@@ -40,6 +40,11 @@ uninstall:
 #	-sudo systemctl disable $(SERVICE_BASENAME)
 #	-sudo rm -fr /usr/lib/systemd/system/$(SERVICE_BASENAME)
 	sudo rm -fr /usr/share/$(MODULE_NAME)
+
+.PHONY: validate_requirements
+validate_requirements:
+	echo ${PYTHON_FILES}
+	sudo pip install -r requirements.txt
 
 clean:
 	-rm -rf build
