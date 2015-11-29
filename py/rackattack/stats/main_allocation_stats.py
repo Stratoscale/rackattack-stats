@@ -2,6 +2,7 @@ import os
 import time
 import pytz
 import Queue
+import pprint
 import logging
 import datetime
 import threading
@@ -224,7 +225,7 @@ class AllocationsHandler(threading.Thread):
         record.update(state)
 
         try:
-            logging.info("Inserting inauguration to DB: {}".format(record))
+            logging.info("Inserting inauguration to DB (id: {}):\n{}".format(id, pprint.pformat(record)))
             self._db.create(index='inaugurations', doc_type='inauguration', body=record, id=id)
         except Exception:
             logging.exception("Inauguration DB record insertion failed. Quitting.")
