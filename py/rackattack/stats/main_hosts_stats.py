@@ -112,9 +112,7 @@ def fetch_nodes_stats(timestamp):
     # rackattack). This is quite ugly, but we haven't managed to craete a
     # query in Kibana which does an average on the count of states (2
     # aggregations)
-    states = ('INAUGURATION_DONE', 'CHECKED_IN',
-              'SLOW_RECLAIMATION_IN_PROGRESS', 'INAUGURATION_LABEL_PROVIDED',
-              'QUICK_RECLAIMATION_IN_PROGRESS')
+    states = list(set([host['state'] for host in stats['hosts']]))
     for idx, _state in enumerate(states):
         record = {'state': _state,
                   'states_count': len([host for host in stats['hosts'] if
