@@ -23,12 +23,16 @@ def datetime_from_timestamp(timestamp):
 
 
 class AllocationsHandler(threading.Thread):
+    INAUGURATIONS_INDEX = "inaugurations"
+    ALLOCATION_REQUESTS_INDEX = "allocation_requests"
+
     def __init__(self, subscription_mgr, db, ready_event, stop_event):
         self._hosts_state = dict()
         self._db = db
         self._subscription_mgr = subscription_mgr
         logging.info('Subscribing to all hosts allocations.')
         subscription_mgr.registerForAllAllocations(self._pika_all_allocations_handler)
+        self._current_allocation_request = None
         self._allocation_subscriptions = set()
         self._tasks = Queue.Queue()
         self._ready_event = ready_event
@@ -138,8 +142,18 @@ class AllocationsHandler(threading.Thread):
     def _pika_all_allocations_handler(self, message):
         self._tasks.put([None, self._all_allocations_handler, message, None], block=True)
 
+    def _store_current_requested_allocation(self, message):
+        info = message['allocationInfo']
+        requirements = message['requirements']
+        self._current_allocation_request = message
+        self._db.create(index=self.ALLOCATION_REQUESTS_INDEX,
+                        doc_type='allocation_request',
+                        body=self._current_allocation_request,
+                        id=id)
+
     def _all_allocations_handler(self, message):
         if message['event'] == 'requested':
+            self._store_current_requested_allocation(message)
             return
         assert message['event'] == 'created'
         logging.info('New allocation: {}'.format(message))
@@ -226,7 +240,7 @@ class AllocationsHandler(threading.Thread):
 
         try:
             logging.info("Inserting inauguration to DB (id: {}):\n{}".format(id, pprint.pformat(record)))
-            self._db.create(index='inaugurations', doc_type='inauguration', body=record, id=id)
+            self._db.create(index=self.INAUGURATIONS_INDEX, doc_type='inauguration', body=record, id=id)
         except Exception:
             logging.exception("Inauguration DB record insertion failed. Quitting.")
             self.stop()

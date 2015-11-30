@@ -73,6 +73,7 @@ class Test(unittest.TestCase):
         self.mgr = SubscribeMock.instances[0]
         self.expected_reported_inaugurated_hosts = []
         self.expected_reported_uninaugurated_hosts = []
+        self.expected_reported_allocation_requests = []
         self.uninaugurated_hosts_of_open_reported_allocations = dict()
 
     def tearDown(self):
@@ -195,6 +196,12 @@ class Test(unittest.TestCase):
         self.validate_db()
         self.validate_open_registerations()
 
+    def test_one_allocation_request(self):
+        msg = self.generate_allocation_request_message(nr_hosts=10)
+        self.generate_allocation_request_flow(msg)
+        self.validate_db()
+        self.validate_open_registerations()
+
     def validate_open_registerations(self):
         """Validate that there's no leak of registerations."""
         subscribed_allocation_ids = set(self.mgr.allocations_callbacks)
@@ -208,15 +215,23 @@ class Test(unittest.TestCase):
         self.tested.finish_all_commands_in_queue()
         args = self._insert_to_db_mock.call_args_list
         while args:
-            actual_inauguration_details = args.pop(0)[1]["body"]
-            if actual_inauguration_details["inauguration_done"]:
-                expected_host_id = self.expected_reported_inaugurated_hosts.pop(0)
-            else:
-                expected_host_id = self.expected_reported_uninaugurated_hosts.pop(0)
-            actual_host_id = actual_inauguration_details['host_id']
-            self.assertEquals(expected_host_id, actual_host_id)
+            call = args.pop(0)[1]
+            index = call["index"]
+            body = call["body"]
+            if index == AllocationsHandler.INAUGURATIONS_INDEX:
+                if body["inauguration_done"]:
+                    expected_host_id = self.expected_reported_inaugurated_hosts.pop(0)
+                else:
+                    expected_host_id = self.expected_reported_uninaugurated_hosts.pop(0)
+                actual_host_id = body['host_id']
+                self.assertEquals(expected_host_id, actual_host_id)
+            elif index == AllocationsHandler.ALLOCATION_REQUESTS_INDEX:
+                expected_allocation_request = self.expected_reported_allocation_requests.pop(0)
+                actual_allocation_request = body
+                self.assertEquals(expected_allocation_request, actual_allocation_request)
         self.assertFalse(self.expected_reported_uninaugurated_hosts)
         self.assertFalse(self.expected_reported_inaugurated_hosts)
+        self.assertFalse(self.expected_reported_allocation_requests)
         self._insert_to_db_mock.reset_mock()
 
     def generate_inauguration_flow_for_all_hosts(self, alloc_msg, nr_progress_messages_per_host=10,
@@ -310,18 +325,34 @@ class Test(unittest.TestCase):
             self.mgr.inaugurations_register_wait_conditions[host_id].wait()
             logger.info("Registeration completed.")
 
-    def generate_allocation_creation_message(self, nr_hosts=2):
-        message = dict(allocationID=self.total_allocations_count,
-                       allocationInfo=dict(cpu='This allocation has got swag.'),
-                       event='created')
-        allocated = dict()
+    def generate_allocation_request_flow(self, msg):
+        self.expected_reported_allocation_requests.append(msg)
+        self.mgr.all_allocations_handler(msg)
+
+    def generate_generic_allocation_message(self, nr_hosts=2):
+        message = dict(allocationInfo=dict(cpu="This allocation has got swag."))
         requirements = dict()
+        for host_nr in xrange(nr_hosts):
+            host_name = 'node{}'.format(host_nr)
+            requirements[host_name] = dict(server_coolness='give me a very cool server')
+        message['requirements'] = requirements
+        return message
+
+    def generate_allocation_request_message(self, nr_hosts=2):
+        message = self.generate_generic_allocation_message(nr_hosts)
+        message["event"] = "requested"
+        return message
+
+    def generate_allocation_creation_message(self, nr_hosts=2):
+        message = self.generate_generic_allocation_message(nr_hosts)
+        message["allocationID"] = self.total_allocations_count
+        message["allocationInfo"] = dict(cpu='This allocation has got swag.')
+        message["event"] = 'created'
+        allocated = dict()
         for host_nr in xrange(nr_hosts):
             host_id = self.available_hosts.pop(0)
             host_name = 'node{}'.format(host_nr)
             allocated[host_name] = host_id
-            requirements[host_name] = dict(server_coolness='give me a very cool server')
-        message['requirements'] = requirements
         message['allocated'] = allocated
         return message
 
