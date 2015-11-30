@@ -25,6 +25,7 @@ def datetime_from_timestamp(timestamp):
 class AllocationsHandler(threading.Thread):
     INAUGURATIONS_INDEX = "inaugurations"
     ALLOCATION_REQUESTS_INDEX = "allocation_requests"
+    ALLOCATION_CREATIONS_INDEX = "allocation_approvals"
 
     def __init__(self, subscription_mgr, db, ready_event, stop_event):
         self._hosts_state = dict()
@@ -32,13 +33,13 @@ class AllocationsHandler(threading.Thread):
         self._subscription_mgr = subscription_mgr
         logging.info('Subscribing to all hosts allocations.')
         subscription_mgr.registerForAllAllocations(self._pika_all_allocations_handler)
-        self._current_allocation_request = None
         self._allocation_subscriptions = set()
         self._tasks = Queue.Queue()
         self._ready_event = ready_event
         self._latest_allocation_idx = None
         self._stop_event = stop_event
         self._host_indices = list()
+        self.db_record_id_of_last_requested_allocation = None
         threading.Thread.__init__(self)
 
     def run(self):
@@ -143,13 +144,20 @@ class AllocationsHandler(threading.Thread):
         self._tasks.put([None, self._all_allocations_handler, message, None], block=True)
 
     def _store_current_requested_allocation(self, message):
-        info = message['allocationInfo']
-        requirements = message['requirements']
-        self._current_allocation_request = message
-        self._db.create(index=self.ALLOCATION_REQUESTS_INDEX,
-                        doc_type='allocation_request',
-                        body=self._current_allocation_request,
-                        id=id)
+        request_msg = dict(allocationInfo=message['allocationInfo'],
+                           requirements=message['requirements'])
+        record = self._db.create(index=self.ALLOCATION_REQUESTS_INDEX,
+                                 doc_type='allocation_request',
+                                 body=request_msg)
+        self.db_record_id_of_last_requested_allocation = record["id"]
+
+    def _store_allocation_creation(self, message):
+        message = dict(allocation_id=message["allocationID"],
+                       allocated=message["allocated"],
+                       allocation_db_record_id=self.db_record_id_of_last_requested_allocation)
+        self._db.create(index=self.ALLOCATION_CREATIONS_INDEX,
+                        doc_type='allocation_creation',
+                        body=message)
 
     def _all_allocations_handler(self, message):
         if message['event'] == 'requested':
@@ -157,6 +165,7 @@ class AllocationsHandler(threading.Thread):
             return
         assert message['event'] == 'created'
         logging.info('New allocation: {}'.format(message))
+        self._store_allocation_creation(message)
         idx = message['allocationID']
         if self._latest_allocation_idx is None:
             self._latest_allocation_idx = idx

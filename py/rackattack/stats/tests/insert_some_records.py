@@ -41,11 +41,17 @@ class SubscribeMock(object):
         self.inaugurations_register_wait_conditions[host_id].set()
 
 
+class RecordMock(object):
+    def __getitem__(self, key):
+        return dict(id="some_id")
+
+
 class Test(unittest.TestCase):
     def setUp(self):
         rackattack.tcp.subscribe.Subscribe = SubscribeMock
         SubscribeMock.instances = []
         self._db = mock.Mock()
+        self._db.create = mock.Mock(return_value=RecordMock())
         self.stop_event = threading.Event()
         self.ready_event = threading.Event()
         self.main_thread = threading.Thread(target=rackattack.stats.main_allocation_stats.main,
@@ -74,6 +80,7 @@ class Test(unittest.TestCase):
         self.expected_reported_inaugurated_hosts = []
         self.expected_reported_uninaugurated_hosts = []
         self.expected_reported_allocation_requests = []
+        self.expected_reported_allocation_approvals = []
         self.uninaugurated_hosts_of_open_reported_allocations = dict()
 
     def tearDown(self):
@@ -202,6 +209,14 @@ class Test(unittest.TestCase):
         self.validate_db()
         self.validate_open_registerations()
 
+    def test_one_allocation_approval(self):
+        msg = self.generate_allocation_request_message(nr_hosts=10)
+        self.generate_allocation_request_flow(msg)
+        msg = self.generate_allocation_creation_message(nr_hosts=10)
+        self.generate_allocation_creation_flow(msg)
+        self.validate_db()
+        self.validate_open_registerations()
+
     def validate_open_registerations(self):
         """Validate that there's no leak of registerations."""
         subscribed_allocation_ids = set(self.mgr.allocations_callbacks)
@@ -214,6 +229,7 @@ class Test(unittest.TestCase):
         This resets the insert_to_db_mock"""
         self.tested.finish_all_commands_in_queue()
         args = self._insert_to_db_mock.call_args_list
+        last_requested_allocation = None
         while args:
             call = args.pop(0)[1]
             index = call["index"]
@@ -226,12 +242,20 @@ class Test(unittest.TestCase):
                 actual_host_id = body['host_id']
                 self.assertEquals(expected_host_id, actual_host_id)
             elif index == AllocationsHandler.ALLOCATION_REQUESTS_INDEX:
-                expected_allocation_request = self.expected_reported_allocation_requests.pop(0)
-                actual_allocation_request = body
-                self.assertEquals(expected_allocation_request, actual_allocation_request)
+                expected_request = self.expected_reported_allocation_requests.pop(0)
+                actual_request = body
+                self.assertEquals(expected_request["requirements"], actual_request["requirements"])
+                self.assertEquals(expected_request["allocationInfo"], actual_request["allocationInfo"])
+                last_requested_allocation = expected_request
+            elif index == AllocationsHandler.ALLOCATION_CREATIONS_INDEX:
+                expected_approval = self.expected_reported_allocation_approvals.pop(0)
+                actual_approval = body
+                self.assertEquals(expected_approval["allocated"], actual_approval["allocated"])
+                self.assertEquals(expected_approval["allocation_id"], actual_approval["allocation_id"])
         self.assertFalse(self.expected_reported_uninaugurated_hosts)
         self.assertFalse(self.expected_reported_inaugurated_hosts)
         self.assertFalse(self.expected_reported_allocation_requests)
+        self.assertFalse(self.expected_reported_allocation_approvals)
         self._insert_to_db_mock.reset_mock()
 
     def generate_inauguration_flow_for_all_hosts(self, alloc_msg, nr_progress_messages_per_host=10,
@@ -304,6 +328,10 @@ class Test(unittest.TestCase):
         self.uninaugurated_hosts_of_open_reported_allocations[allocation_id].remove(host_id)
         logger.info("Unegisteration completed.")
 
+    def prepare_expected_allocation_creation(self, alloc_msg):
+        expected = dict(allocation_id=alloc_msg["allocationID"], allocated=alloc_msg["allocated"])
+        self.expected_reported_allocation_approvals.append(expected)
+
     def generate_allocation_creation_flow(self, alloc_msg):
         allocation_id = alloc_msg['allocationID']
         self.mgr.allocations_wait_conditions[allocation_id] = threading.Event()
@@ -311,6 +339,7 @@ class Test(unittest.TestCase):
             self.mgr.inaugurations_register_wait_conditions[host_id] = threading.Event()
         self.open_allocations_count += 1
         self.total_allocations_count += 1
+        self.prepare_expected_allocation_creation(alloc_msg)
         self.mgr.all_allocations_handler(alloc_msg)
         self.assertNotIn(allocation_id, self.uninaugurated_hosts_of_open_reported_allocations)
         if self.open_allocations_count > rackattack.stats.main_allocation_stats.MAX_NR_ALLOCATIONS:
@@ -357,7 +386,7 @@ class Test(unittest.TestCase):
         return message
 
 if __name__ == '__main__':
-    logger.setLevel(logging.CRITICAL)
+    logger.setLevel(logging.DEBUG)
     handler = logging.StreamHandler()
     handler.setLevel(logging.DEBUG)
     logger.addHandler(handler)
