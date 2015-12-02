@@ -24,8 +24,7 @@ def datetime_from_timestamp(timestamp):
 
 class AllocationsHandler(threading.Thread):
     INAUGURATIONS_INDEX = "inaugurations"
-    ALLOCATION_REQUESTS_INDEX = "allocation_requests"
-    ALLOCATION_CREATIONS_INDEX = "allocation_approvals"
+    ALLOCATIONS_INDEX = "allocations_2"
 
     def __init__(self, subscription_mgr, db, ready_event, stop_event):
         self._hosts_state = dict()
@@ -39,7 +38,7 @@ class AllocationsHandler(threading.Thread):
         self._latest_allocation_idx = None
         self._stop_event = stop_event
         self._host_indices = list()
-        self.db_record_id_of_last_requested_allocation = None
+        self._db_record_id_of_last_requested_allocation = None
         threading.Thread.__init__(self)
 
     def run(self):
@@ -144,20 +143,36 @@ class AllocationsHandler(threading.Thread):
         self._tasks.put([None, self._all_allocations_handler, message, None], block=True)
 
     def _store_current_requested_allocation(self, message):
-        request_msg = dict(allocationInfo=message['allocationInfo'],
-                           requirements=message['requirements'])
-        record = self._db.create(index=self.ALLOCATION_REQUESTS_INDEX,
-                                 doc_type='allocation_request',
-                                 body=request_msg)
-        self.db_record_id_of_last_requested_allocation = record["id"]
+        nr_nodes = len(message["requirements"])
+        record = dict(allocationInfo=message['allocationInfo'],
+                      nodes=self.get_nodes_list_from_requirements(message['requirements']),
+                      nr_nodes=nr_nodes,
+                      highest_phase_reached="requested")
+        record["date"] = datetime_from_timestamp(time.time())
+        record_metadata = self._db.create(index=self.ALLOCATIONS_INDEX,
+                                          doc_type='allocation',
+                                          body=record)
+        self._db_record_id_of_last_requested_allocation = record_metadata["_id"]
 
     def _store_allocation_creation(self, message):
-        message = dict(allocation_id=message["allocationID"],
-                       allocated=message["allocated"],
-                       allocation_db_record_id=self.db_record_id_of_last_requested_allocation)
-        self._db.create(index=self.ALLOCATION_CREATIONS_INDEX,
-                        doc_type='allocation_creation',
-                        body=message)
+        nodes = self.get_nodes_list_from_requirements(message["requirements"])
+        self.update_nodes_list_with_allocated(nodes, message["allocated"])
+        nr_nodes = len(nodes)
+        record = dict(nodes=nodes,
+                      nr_nodes=nr_nodes,
+                      allocationInfo=message["allocationInfo"],
+                      highest_phase_reached="created",
+                      allocation_id=message["allocationID"])
+        if self._db_record_id_of_last_requested_allocation is None:
+            record["date"] = datetime_from_timestamp(time.time())
+            self._db.create(index=self.ALLOCATIONS_INDEX,
+                            doc_type='allocation',
+                            body=record)
+        else:
+            self._db.update(index=self.ALLOCATIONS_INDEX,
+                            doc_type='allocation',
+                            id=self._db_record_id_of_last_requested_allocation,
+                            body=dict(doc=record))
 
     def _all_allocations_handler(self, message):
         if message['event'] == 'requested':
@@ -260,6 +275,20 @@ class AllocationsHandler(threading.Thread):
             self._host_indices.append(hostID)
         return self._host_indices.index(hostID)
 
+    @classmethod
+    def get_nodes_list_from_requirements(cls, requirements):
+        result = list()
+        for node_name, node_requirements in requirements.iteritems():
+            node = dict(node_name=node_name, requirements=node_requirements)
+            result.append(node)
+        return result
+
+    @classmethod
+    def update_nodes_list_with_allocated(cls, nodes, allocated):
+        for node in nodes:
+            node_name = node["node_name"]
+            node["server_name"] = allocated[node_name]
+
 
 def create_connections():
     _, amqp_url, _ = os.environ['RACKATTACK_PROVIDER'].split("@@")
@@ -268,11 +297,12 @@ def create_connections():
 
 
 def configure_logger():
-    logger = logging.getLogger()
-    logger.setLevel(logging.INFO)
-    handler = logging.StreamHandler()
-    handler.setLevel(logging.DEBUG)
-    logger.addHandler(handler)
+    for loggerName in ("elasticsearch.trace",):
+        logger = logging.getLogger()
+        logger.setLevel(logging.INFO)
+        handler = logging.StreamHandler()
+        handler.setLevel(logging.DEBUG)
+        logger.addHandler(handler)
 
 
 def main(ready_event=None, stop_event=threading.Event()):

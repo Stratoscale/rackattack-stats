@@ -3,6 +3,7 @@ import copy
 import logging
 import unittest
 import threading
+import elasticsearch
 import rackattack
 from rackattack.tcp import subscribe
 from rackattack.stats.main_allocation_stats import AllocationsHandler
@@ -41,17 +42,42 @@ class SubscribeMock(object):
         self.inaugurations_register_wait_conditions[host_id].set()
 
 
-class RecordMock(object):
-    def __getitem__(self, key):
-        return dict(id="some_id")
+class ElasticsearchDBMock(object):
+    def __init__(self, *args, **kwargs):
+        self._next_record_id = 0
+        self._records = dict()
+        self._event = threading.Event()
+
+    def create(self, index, doc_type, body, id=None):
+        del doc_type
+        del id
+        record = dict(body)
+        record["_index"] = index
+        record["_id"] = self._next_record_id
+        self._records[self._next_record_id] = record
+        result = dict(_id=self._next_record_id)
+        self._next_record_id += 1
+        self._event.set()
+        return result
+
+    def update(self, index, doc_type, id, body):
+        update = body["doc"]
+        assert id in self._records
+        self._records[id].update(update)
+        self._event.set()
+
+    def get_records_by_order_of_creation(self):
+        keys = self._records.keys()
+        keys.sort()
+        for key in keys:
+            yield self._records[key]
 
 
 class Test(unittest.TestCase):
     def setUp(self):
         rackattack.tcp.subscribe.Subscribe = SubscribeMock
         SubscribeMock.instances = []
-        self._db = mock.Mock()
-        self._db.create = mock.Mock(return_value=RecordMock())
+        elasticsearch.Elasticsearch = ElasticsearchDBMock
         self.stop_event = threading.Event()
         self.ready_event = threading.Event()
         self.main_thread = threading.Thread(target=rackattack.stats.main_allocation_stats.main,
@@ -68,6 +94,7 @@ class Test(unittest.TestCase):
         logger.info("Starting main-allocation-stats's main thread...")
         logger.handlers = list()
         subscription_mgr = subscribe.Subscribe("asdasd@@asdasd@@asdasd")
+        self._db = ElasticsearchDBMock()
         self.tested = AllocationsHandler(subscription_mgr, self._db, self.ready_event, self.stop_event)
         logger.info("Waiting for allocation handler thread to be ready...")
         self.tested.start()
@@ -79,8 +106,7 @@ class Test(unittest.TestCase):
         self.mgr = SubscribeMock.instances[0]
         self.expected_reported_inaugurated_hosts = []
         self.expected_reported_uninaugurated_hosts = []
-        self.expected_reported_allocation_requests = []
-        self.expected_reported_allocation_approvals = []
+        self.expected_reported_allocations = []
         self.uninaugurated_hosts_of_open_reported_allocations = dict()
 
     def tearDown(self):
@@ -212,7 +238,7 @@ class Test(unittest.TestCase):
     def test_one_allocation_approval(self):
         msg = self.generate_allocation_request_message(nr_hosts=10)
         self.generate_allocation_request_flow(msg)
-        msg = self.generate_allocation_creation_message(nr_hosts=10)
+        msg = self.generate_allocation_creation_message_from_request_message(msg)
         self.generate_allocation_creation_flow(msg)
         self.validate_db()
         self.validate_open_registerations()
@@ -228,35 +254,33 @@ class Test(unittest.TestCase):
 
         This resets the insert_to_db_mock"""
         self.tested.finish_all_commands_in_queue()
-        args = self._insert_to_db_mock.call_args_list
         last_requested_allocation = None
-        while args:
-            call = args.pop(0)[1]
-            index = call["index"]
-            body = call["body"]
+        db_records = self._db.get_records_by_order_of_creation()
+        for record in db_records:
+            index = record["_index"]
             if index == AllocationsHandler.INAUGURATIONS_INDEX:
-                if body["inauguration_done"]:
+                if record["inauguration_done"]:
                     expected_host_id = self.expected_reported_inaugurated_hosts.pop(0)
                 else:
                     expected_host_id = self.expected_reported_uninaugurated_hosts.pop(0)
-                actual_host_id = body['host_id']
+                actual_host_id = record['host_id']
                 self.assertEquals(expected_host_id, actual_host_id)
-            elif index == AllocationsHandler.ALLOCATION_REQUESTS_INDEX:
-                expected_request = self.expected_reported_allocation_requests.pop(0)
-                actual_request = body
-                self.assertEquals(expected_request["requirements"], actual_request["requirements"])
-                self.assertEquals(expected_request["allocationInfo"], actual_request["allocationInfo"])
-                last_requested_allocation = expected_request
-            elif index == AllocationsHandler.ALLOCATION_CREATIONS_INDEX:
-                expected_approval = self.expected_reported_allocation_approvals.pop(0)
-                actual_approval = body
-                self.assertEquals(expected_approval["allocated"], actual_approval["allocated"])
-                self.assertEquals(expected_approval["allocation_id"], actual_approval["allocation_id"])
+            elif index == AllocationsHandler.ALLOCATIONS_INDEX:
+                expected = self.expected_reported_allocations.pop(0)
+                actual = record
+                logging.info("Expected allocation: {}".format(expected))
+                logging.info("Actual allocation: {}".format(actual))
+                self.assertEquals(expected["nodes"], actual["nodes"])
+                self.assertEquals(expected["allocationInfo"], actual["allocationInfo"])
+                self.assertEquals(expected["highest_phase_reached"], actual["highest_phase_reached"])
+                if expected["highest_phase_reached"] == "created":
+                    self.assertEquals(expected["allocation_id"], actual["allocation_id"])
+                    last_requested_allocation = expected
+            else:
+                assert False
         self.assertFalse(self.expected_reported_uninaugurated_hosts)
         self.assertFalse(self.expected_reported_inaugurated_hosts)
-        self.assertFalse(self.expected_reported_allocation_requests)
-        self.assertFalse(self.expected_reported_allocation_approvals)
-        self._insert_to_db_mock.reset_mock()
+        self.assertFalse(self.expected_reported_allocations)
 
     def generate_inauguration_flow_for_all_hosts(self, alloc_msg, nr_progress_messages_per_host=10,
                                                  inauguration_report_expected=True):
@@ -328,9 +352,22 @@ class Test(unittest.TestCase):
         self.uninaugurated_hosts_of_open_reported_allocations[allocation_id].remove(host_id)
         logger.info("Unegisteration completed.")
 
-    def prepare_expected_allocation_creation(self, alloc_msg):
-        expected = dict(allocation_id=alloc_msg["allocationID"], allocated=alloc_msg["allocated"])
-        self.expected_reported_allocation_approvals.append(expected)
+    def prepare_expected_reported_allocation(self, alloc_msg):
+        nodes = self.get_expected_nodes_list_from_requirements(alloc_msg["requirements"])
+        self.update_expected_nodes_list_with_allocated(nodes, alloc_msg["allocated"])
+        allocation_info = dict(allocationInfo=alloc_msg["allocationInfo"],
+                               nodes=nodes,
+                               highest_phase_reached="created",
+                               allocation_id=alloc_msg["allocationID"])
+        was_allocation_request_reported = self.expected_reported_allocations and \
+            self.expected_reported_allocations[-1]["highest_phase_reached"] == "requested"
+        if was_allocation_request_reported:
+            allocation = self.expected_reported_allocations[-1]
+            allocation.update(allocation_info)
+        else:
+            allocation = dict()
+            allocation.update(allocation_info)
+            self.expected_reported_allocations.append(allocation)
 
     def generate_allocation_creation_flow(self, alloc_msg):
         allocation_id = alloc_msg['allocationID']
@@ -339,8 +376,10 @@ class Test(unittest.TestCase):
             self.mgr.inaugurations_register_wait_conditions[host_id] = threading.Event()
         self.open_allocations_count += 1
         self.total_allocations_count += 1
-        self.prepare_expected_allocation_creation(alloc_msg)
+        self.prepare_expected_reported_allocation(alloc_msg)
+        self._db._event.clear()
         self.mgr.all_allocations_handler(alloc_msg)
+        self._db._event.wait()
         self.assertNotIn(allocation_id, self.uninaugurated_hosts_of_open_reported_allocations)
         if self.open_allocations_count > rackattack.stats.main_allocation_stats.MAX_NR_ALLOCATIONS:
             return
@@ -355,8 +394,14 @@ class Test(unittest.TestCase):
             logger.info("Registeration completed.")
 
     def generate_allocation_request_flow(self, msg):
-        self.expected_reported_allocation_requests.append(msg)
+        nodes = self.get_expected_nodes_list_from_requirements(msg["requirements"])
+        expected_reported_allocation = dict(nodes=nodes,
+                                            allocationInfo=msg["allocationInfo"],
+                                            highest_phase_reached="requested")
+        self.expected_reported_allocations.append(expected_reported_allocation)
+        self._db._event.clear()
         self.mgr.all_allocations_handler(msg)
+        self._db._event.wait()
 
     def generate_generic_allocation_message(self, nr_hosts=2):
         message = dict(allocationInfo=dict(cpu="This allocation has got swag."))
@@ -372,18 +417,39 @@ class Test(unittest.TestCase):
         message["event"] = "requested"
         return message
 
-    def generate_allocation_creation_message(self, nr_hosts=2):
-        message = self.generate_generic_allocation_message(nr_hosts)
+    def put_allocation_creation_unique_fields(self, message):
         message["allocationID"] = self.total_allocations_count
         message["allocationInfo"] = dict(cpu='This allocation has got swag.')
         message["event"] = 'created'
         allocated = dict()
-        for host_nr in xrange(nr_hosts):
+        for host_nr in xrange(len(message["requirements"])):
             host_id = self.available_hosts.pop(0)
             host_name = 'node{}'.format(host_nr)
             allocated[host_name] = host_id
         message['allocated'] = allocated
+
+    def generate_allocation_creation_message(self, nr_hosts=2):
+        message = self.generate_generic_allocation_message(nr_hosts)
+        self.put_allocation_creation_unique_fields(message)
         return message
+
+    def generate_allocation_creation_message_from_request_message(self, message):
+        self.put_allocation_creation_unique_fields(message)
+        return message
+
+    @classmethod
+    def get_expected_nodes_list_from_requirements(cls, requirements):
+        result = list()
+        for node_name, node_requirements in requirements.iteritems():
+            node = dict(node_name=node_name, requirements=node_requirements)
+            result.append(node)
+        return result
+
+    @classmethod
+    def update_expected_nodes_list_with_allocated(cls, nodes, allocated):
+        for node in nodes:
+            node_name = node["node_name"]
+            node["server_name"] = allocated[node_name]
 
 if __name__ == '__main__':
     logger.setLevel(logging.DEBUG)
