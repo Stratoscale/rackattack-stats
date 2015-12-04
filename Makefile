@@ -13,7 +13,7 @@ check_convention:
 	pep8 py --max-line-length=109
 
 unittest:
-	RACKATTACK_PROVIDER=asd@@asd@@asd UPSETO_JOIN_PYTHON_NAMESPACES=yes PYTHONPATH=py python py/rackattack/stats/tests/insert_some_records.py
+	UPSETO_JOIN_PYTHON_NAMESPACES=yes PYTHONPATH=py python py/rackattack/stats/tests/insert_some_records.py
 
 .PHONY: build
 build: build/$(EGG_BASENAME)
