@@ -2,6 +2,7 @@ import mock
 import copy
 import logging
 import unittest
+import greenlet
 import threading
 import elasticsearch
 import rackattack
@@ -19,27 +20,24 @@ class SubscribeMock(object):
         self.all_allocations_handler = None
         self.allocations_callbacks = dict()
         self.inaugurations_callbacks = dict()
+        self.inaugurations_callback_history = list()
         self.instances.append(self)
-        self.inaugurations_register_wait_conditions = dict()
-        self.allocations_wait_conditions = dict()
 
     def registerForAllAllocations(self, callback):
         self.all_allocations_handler = callback
 
     def registerForAllocation(self, idx, callback):
         self.allocations_callbacks[idx] = callback
-        self.allocations_wait_conditions[idx].set()
 
     def unregisterForAllocation(self, idx):
         del self.allocations_callbacks[idx]
-        self.allocations_wait_conditions[idx].set()
 
     def registerForInagurator(self, host_id, callback):
         self.inaugurations_callbacks[host_id] = callback
-        self.inaugurations_register_wait_conditions[host_id].set()
+        self.inaugurations_callback_history.append(callback)
 
     def unregisterForInaugurator(self, host_id):
-        self.inaugurations_register_wait_conditions[host_id].set()
+        del self.inaugurations_callbacks[host_id]
 
 
 class ElasticsearchDBMock(object):
@@ -78,10 +76,6 @@ class Test(unittest.TestCase):
         rackattack.tcp.subscribe.Subscribe = SubscribeMock
         SubscribeMock.instances = []
         elasticsearch.Elasticsearch = ElasticsearchDBMock
-        self.stop_event = threading.Event()
-        self.ready_event = threading.Event()
-        self.main_thread = threading.Thread(target=rackattack.stats.main_allocation_stats.main,
-                                            args=(self.ready_event, self.stop_event))
         self.open_allocations_count = 0
         self.total_allocations_count = 0
         self.available_hosts = ['alpha', 'bravo', 'charlie', 'delta', 'echo', 'foxtrot', 'golf', 'hotel',
@@ -93,13 +87,9 @@ class Test(unittest.TestCase):
         self.assertEquals(len(self.available_hosts), len(set(self.available_hosts)))
         logger.info("Starting main-allocation-stats's main thread...")
         logger.handlers = list()
-        subscription_mgr = subscribe.Subscribe("asdasd@@asdasd@@asdasd")
-        self._db = ElasticsearchDBMock()
-        self.tested = AllocationsHandler(subscription_mgr, self._db, self.ready_event, self.stop_event)
-        logger.info("Waiting for allocation handler thread to be ready...")
-        self.tested.start()
-        self.ready_event.wait()
-        logger.info("Thread is ready.")
+        self.tested = self._generate_instance_with_mocked_event_loop()
+        self.tested_server_context = greenlet.greenlet(self.tested.run)
+        assert self._db is not None
         self._insert_to_db_mock = self._db.create
         instances = SubscribeMock.instances
         self.assertEquals(len(instances), 1)
@@ -108,10 +98,7 @@ class Test(unittest.TestCase):
         self.expected_reported_uninaugurated_hosts = []
         self.expected_reported_allocations = []
         self.uninaugurated_hosts_of_open_reported_allocations = dict()
-
-    def tearDown(self):
-        self.tested.stop()
-        self.tested.join()
+        self._continue_with_server()
 
     def test_one_allocation(self):
         alloc_msg = self.generate_allocation_creation_message(nr_hosts=10)
@@ -168,11 +155,10 @@ class Test(unittest.TestCase):
         hosts_on_both_allocations = original_hosts_pool[4:4 + nr_hosts_in_allocation]
         self.available_hosts = hosts_on_both_allocations + self.available_hosts
         another_alloc_msg = self.generate_allocation_creation_message(nr_hosts_in_allocation)
-        self.prepare_wait_events_for_allocation_unregisteration(alloc_msg)
         self.generate_allocation_creation_flow(another_alloc_msg)
         # At this stage, the tested unit should figure that a new allocation uses hosts of an older
         # allocation, so it should unsubscribe from the old allocation.
-        self.wait_for_allocation_unregisteration(alloc_msg)
+        self.wait_for_allocation_unregisteration(alloc_msg, still_registered=hosts_on_both_allocations)
         inaugurated_hosts_in_second_allocation = ("golf", "hotel", "kilo", "lima", "oscar", "papa")
         for host in inaugurated_hosts_in_second_allocation:
             self.generate_inauguration_flow_for_single_host(host, another_alloc_msg["allocationID"])
@@ -185,7 +171,7 @@ class Test(unittest.TestCase):
         self.generate_allocation_creation_flow(alloc_msg)
         self.generate_inauguration_flow_for_all_hosts(alloc_msg)
         host_id = alloc_msg["allocated"].values()[0]
-        inauguration_callback = self.mgr.inaugurations_callbacks[host_id]
+        inauguration_callback = self.mgr.inaugurations_callback_history[0]
         self.generate_allocation_death_flow(alloc_msg)
         done_message = dict(id=host_id, status='done')
         inauguration_callback(done_message)
@@ -214,11 +200,7 @@ class Test(unittest.TestCase):
         self.validate_db()
         self.validate_open_registerations()
         one_too_many = self.generate_allocation_creation_message()
-        self.generate_allocation_creation_flow(one_too_many)
-        self.generate_inauguration_flow_for_all_hosts(alloc_msg, inauguration_report_expected=False)
-        self.assertNotIn(one_too_many["allocationID"],
-                         self.uninaugurated_hosts_of_open_reported_allocations)
-        self.assertFalse(self.expected_reported_inaugurated_hosts)
+        self.assertNotIn(one_too_many["allocationID"], self.mgr.allocations_callbacks)
 
     def test_a_lot_of_allocations(self):
         for i in xrange(300):
@@ -253,7 +235,6 @@ class Test(unittest.TestCase):
         """Validate contents of records in DB by comparing the insert-mock to the expected results.
 
         This resets the insert_to_db_mock"""
-        self.tested.finish_all_commands_in_queue()
         last_requested_allocation = None
         db_records = self._db.get_records_by_order_of_creation()
         for record in db_records:
@@ -298,46 +279,47 @@ class Test(unittest.TestCase):
                                                                           chainGetCount=chain_get_count)))
             if inauguration_report_expected:
                 self.mgr.inaugurations_callbacks[host_id](progress_message)
-        self.assertIn(host_id, self.mgr.inaugurations_callbacks)
         if inauguration_report_expected:
-            self.prepare_wait_event_for_inauguration_unregisteration(host_id)
+            self.assertIn(host_id, self.mgr.inaugurations_callbacks)
+        else:
+            self.assertNotIn(host_id, self.mgr.inaugurations_callbacks)
         done_message = dict(id=host_id, status='done')
         self.mgr.inaugurations_callbacks[host_id](done_message)
+        self._continue_with_server()
         if inauguration_report_expected:
-            self.wait_for_inauguration_unregisteration(host_id, allocation_id)
+            self.assertNotIn(host_id, self.mgr.inaugurations_callbacks)
             self.expected_reported_inaugurated_hosts.append(host_id)
+            self.uninaugurated_hosts_of_open_reported_allocations[allocation_id].remove(host_id)
 
     def generate_new_allocation_flow(self):
         return message
 
-    def prepare_wait_events_for_allocation_unregisteration(self, alloc_msg):
-        allocation_id = alloc_msg['allocationID']
-        self.mgr.allocations_wait_conditions[allocation_id] = threading.Event()
-
-    def prepare_wait_event_for_inauguration_unregisteration(self, host_id):
-        self.mgr.inaugurations_register_wait_conditions[host_id] = threading.Event()
-
     def generate_allocation_death_flow(self, alloc_msg, was_allocation_creation_reported=True):
         allocation_id = alloc_msg['allocationID']
-        self.prepare_wait_events_for_allocation_unregisteration(alloc_msg)
         self.send_allocation_death_message(allocation_id)
+        self._continue_with_server()
         self.wait_for_allocation_unregisteration(alloc_msg, was_allocation_creation_reported)
         self.open_allocations_count -= 1
 
     def send_allocation_death_message(self, allocation_id):
         self.mgr.allocations_callbacks[allocation_id](message=dict(event='changedState'))
 
-    def wait_for_allocation_unregisteration(self, alloc_msg, was_allocation_creation_reported=True):
+    def wait_for_allocation_unregisteration(self,
+                                            alloc_msg,
+                                            was_allocation_creation_reported=True,
+                                            still_registered=None):
+        if still_registered is None:
+            still_registered = list()
         allocation_id = alloc_msg['allocationID']
         logger.info("Waiting for unregisteration to allocation {}".format(allocation_id))
-        self.mgr.allocations_wait_conditions[allocation_id].wait()
-        del self.mgr.allocations_wait_conditions[allocation_id]
+        self.assertNotIn(allocation_id, self.mgr.allocations_callbacks)
         logger.info("Unregisteration completed.")
         # TODO wait only for those who were uninaugurated
         for host_id in self.uninaugurated_hosts_of_open_reported_allocations[allocation_id]:
-            logger.info("Waiting for unregisteration to inauguration of {}...".format(host_id))
-            self.mgr.inaugurations_register_wait_conditions[host_id].wait()
-            logger.info("Unegisteration completed.")
+            if host_id not in still_registered:
+                logger.info("Waiting for unregisteration to inauguration of {}...".format(host_id))
+                self.assertNotIn(host_id, self.mgr.inaugurations_callbacks.keys())
+                logger.info("Unregisteration completed.")
         if was_allocation_creation_reported:
             uninaugurated = self.uninaugurated_hosts_of_open_reported_allocations[allocation_id]
             uninaugurated.sort()
@@ -345,12 +327,6 @@ class Test(unittest.TestCase):
             del self.uninaugurated_hosts_of_open_reported_allocations[allocation_id]
         else:
             self.assertNotIn(allocation_id, self.open_reporeted_allocations)
-
-    def wait_for_inauguration_unregisteration(self, host_id, allocation_id):
-        logger.info("Waiting for unregisteration to inauguration of {}...".format(host_id))
-        self.mgr.inaugurations_register_wait_conditions[host_id].wait()
-        self.uninaugurated_hosts_of_open_reported_allocations[allocation_id].remove(host_id)
-        logger.info("Unegisteration completed.")
 
     def prepare_expected_reported_allocation(self, alloc_msg):
         nodes = self.get_expected_nodes_list_from_requirements(alloc_msg["requirements"])
@@ -371,27 +347,16 @@ class Test(unittest.TestCase):
 
     def generate_allocation_creation_flow(self, alloc_msg):
         allocation_id = alloc_msg['allocationID']
-        self.mgr.allocations_wait_conditions[allocation_id] = threading.Event()
-        for _, host_id in alloc_msg['allocated'].iteritems():
-            self.mgr.inaugurations_register_wait_conditions[host_id] = threading.Event()
         self.open_allocations_count += 1
         self.total_allocations_count += 1
         self.prepare_expected_reported_allocation(alloc_msg)
-        self._db._event.clear()
         self.mgr.all_allocations_handler(alloc_msg)
-        self._db._event.wait()
+        self._continue_with_server()
         self.assertNotIn(allocation_id, self.uninaugurated_hosts_of_open_reported_allocations)
         if self.open_allocations_count > rackattack.stats.main_allocation_stats.MAX_NR_ALLOCATIONS:
             return
         self.uninaugurated_hosts_of_open_reported_allocations[allocation_id] = \
             copy.copy(alloc_msg["allocated"].values())
-        logger.info("Waiting for registeration to allocation {}...".format(allocation_id))
-        self.mgr.allocations_wait_conditions[alloc_msg['allocationID']].wait()
-        logger.info("Registeration completed.")
-        for _, host_id in alloc_msg['allocated'].iteritems():
-            logger.info("Waiting for registeration to inauguration of {}...".format(host_id))
-            self.mgr.inaugurations_register_wait_conditions[host_id].wait()
-            logger.info("Registeration completed.")
 
     def generate_allocation_request_flow(self, msg):
         nodes = self.get_expected_nodes_list_from_requirements(msg["requirements"])
@@ -399,9 +364,8 @@ class Test(unittest.TestCase):
                                             allocationInfo=msg["allocationInfo"],
                                             highest_phase_reached="requested")
         self.expected_reported_allocations.append(expected_reported_allocation)
-        self._db._event.clear()
         self.mgr.all_allocations_handler(msg)
-        self._db._event.wait()
+        self._continue_with_server()
 
     def generate_generic_allocation_message(self, nr_hosts=2):
         message = dict(allocationInfo=dict(cpu="This allocation has got swag."))
@@ -451,9 +415,32 @@ class Test(unittest.TestCase):
             node_name = node["node_name"]
             node["server_name"] = allocated[node_name]
 
+    def _generate_instance_with_mocked_event_loop(self):
+        self._db = ElasticsearchDBMock()
+        subscription_mgr = subscribe.Subscribe("asdasd@@asdasd@@asdasd")
+        instance = AllocationsHandler(subscription_mgr, self._db)
+
+        def queueGetWrapper(*args, **kwargs):
+            if self.tested._tasks.qsize() > 0:
+                item = self.original_get()
+            else:
+                item = greenlet.getcurrent().parent.switch()
+            return item
+
+        self.original_get = instance._tasks.get
+        instance._tasks.get = queueGetWrapper
+        return instance
+
+    def _continue_with_server(self, stop_on_empty_queue=False):
+        if self.tested._tasks.qsize() > 0:
+            item = self.original_get()
+            self.tested_server_context.switch(item)
+        elif not stop_on_empty_queue:
+            self.tested_server_context.switch()
+
 if __name__ == '__main__':
-    logger.setLevel(logging.DEBUG)
+    logger.setLevel(logging.ERROR)
     handler = logging.StreamHandler()
-    handler.setLevel(logging.DEBUG)
+    handler.setLevel(logging.ERROR)
     logger.addHandler(handler)
     unittest.main()

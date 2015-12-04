@@ -11,7 +11,7 @@ from functools import partial
 from rackattack.tcp import subscribe
 
 
-MAX_NR_ALLOCATIONS = 100
+MAX_NR_ALLOCATIONS = 150
 TIMEZONE = 'Asia/Jerusalem'
 
 
@@ -22,11 +22,11 @@ def datetime_from_timestamp(timestamp):
     return datetime_now
 
 
-class AllocationsHandler(threading.Thread):
+class AllocationsHandler:
     INAUGURATIONS_INDEX = "inaugurations"
     ALLOCATIONS_INDEX = "allocations_2"
 
-    def __init__(self, subscription_mgr, db, ready_event, stop_event):
+    def __init__(self, subscription_mgr, db):
         self._hosts_state = dict()
         self._db = db
         self._subscription_mgr = subscription_mgr
@@ -34,15 +34,11 @@ class AllocationsHandler(threading.Thread):
         subscription_mgr.registerForAllAllocations(self._pika_all_allocations_handler)
         self._allocation_subscriptions = set()
         self._tasks = Queue.Queue()
-        self._ready_event = ready_event
         self._latest_allocation_idx = None
-        self._stop_event = stop_event
         self._host_indices = list()
         self._db_record_id_of_last_requested_allocation = None
-        threading.Thread.__init__(self)
 
     def run(self):
-        self._ready_event.set()
         while True:
             logging.info('Waiting for a new event (current number of monitored allocations: {})...'
                          .format(len(self._allocation_subscriptions)))
@@ -175,6 +171,10 @@ class AllocationsHandler(threading.Thread):
                             body=dict(doc=record))
 
     def _all_allocations_handler(self, message):
+        if len(self._allocation_subscriptions) == MAX_NR_ALLOCATIONS:
+            logging.error("Something has gone wrong; Too many open allocations. Quitting")
+            self.stop(remove_pending_events=True)
+            return
         if message['event'] == 'requested':
             self._store_current_requested_allocation(message)
             return
@@ -188,10 +188,6 @@ class AllocationsHandler(threading.Thread):
             logging.error("Got an allocation index {} which is smaller than the previous one ({}) "
                           "(could RackAttack have been restarted?). Quitting."
                           .format(idx, self._latest_allocation_idx))
-            self.stop(remove_pending_events=True)
-            return
-        if len(self._allocation_subscriptions) == MAX_NR_ALLOCATIONS:
-            logging.error("Something has gone wrong; Too many open allocations. Quitting")
             self.stop(remove_pending_events=True)
             return
         info = message['allocationInfo']
@@ -305,22 +301,13 @@ def configure_logger():
         logger.addHandler(handler)
 
 
-def main(ready_event=None, stop_event=threading.Event()):
+def main():
     configure_logger()
-
-    if ready_event is None:
-        ready_event = threading.Event()
-
     db = elasticsearch.Elasticsearch([{"host": "10.0.1.66", "port": 9200}])
     logging.info("Initializing allocations handler....")
     subscription_mgr = create_connections()
-    handler = AllocationsHandler(subscription_mgr, db, ready_event, stop_event)
-    handler.start()
-    ready_event.wait()
-    logging.info("Allocations handler is ready.")
-    stop_event.wait()
-    handler.stop()
-    handler.join()
+    handler = AllocationsHandler(subscription_mgr, db)
+    handler.run()
     logging.info("Done.")
 
 if __name__ == '__main__':
