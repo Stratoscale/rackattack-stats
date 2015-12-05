@@ -2,6 +2,7 @@ import os
 import time
 import pytz
 import Queue
+import signal
 import pprint
 import logging
 import datetime
@@ -18,6 +19,7 @@ MAX_NR_ALLOCATIONS = 150
 TIMEZONE = 'Asia/Jerusalem'
 DB_RECONNECTION_ATTEMPTS_INTERVAL = 60
 EMAIL_SUBSCRIBERS = ("eliran@stratoscale.com",)
+MAX_NR_SECONDS_WITHOUT_EVENTS_BEFORE_ALERTING = 3
 
 
 is_connected = False
@@ -72,7 +74,20 @@ class AllocationsHandler:
         self._host_indices = list()
         self._db_record_id_of_last_requested_allocation = None
 
+        def alert_warn_func(msg):
+            logging.warn(msg)
+            send_mail(msg)
+
+        def alert_info_func(msg):
+            logging.info(msg)
+            send_mail(msg)
+
+        self._events_monitor = EventsMonitor(MAX_NR_SECONDS_WITHOUT_EVENTS_BEFORE_ALERTING,
+                                             self._alert_info_func,
+                                             self._alert_warn_func)
+
     def run(self):
+        self._events_monitor.start()
         while True:
             logging.info('Waiting for a new event (current number of monitored allocations: {})...'
                          .format(len(self._allocation_subscriptions)))
@@ -89,6 +104,7 @@ class AllocationsHandler:
             finally:
                 if finishedEvent is not None:
                     finishedEvent.set()
+                self._events_monitor.an_event_has_occurred()
 
     def stop(self, remove_pending_events=False):
         finishedEvent = threading.Event()
