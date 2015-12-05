@@ -328,11 +328,12 @@ def create_subscription():
 
 
 def configure_logger():
-    for loggerName in ("elasticsearch.trace",):
-        logger = logging.getLogger()
-        logger.setLevel(logging.INFO)
+    loggers = {"": logging.INFO, "elasticsearch.trace": logging.WARNING}
+    for loggerName, level in loggers.iteritems():
+        logger = logging.getLogger(loggerName)
+        logger.setLevel(level)
         handler = logging.StreamHandler()
-        handler.setLevel(logging.DEBUG)
+        handler.setLevel(level)
         logger.addHandler(handler)
 
 
