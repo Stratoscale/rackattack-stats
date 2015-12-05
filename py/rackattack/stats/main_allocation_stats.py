@@ -1,16 +1,21 @@
 import os
+import sys
 import time
 import pytz
 import Queue
 import signal
 import pprint
+import socket
+import smtplib
 import logging
 import datetime
 import threading
 import traceback
 import elasticsearch
 from functools import partial
+from email.mime.text import MIMEText
 from rackattack.tcp import subscribe
+from rackattack.stats import events_monitor
 
 
 DB_ADDR = "10.0.1.66"
@@ -19,7 +24,10 @@ MAX_NR_ALLOCATIONS = 150
 TIMEZONE = 'Asia/Jerusalem'
 DB_RECONNECTION_ATTEMPTS_INTERVAL = 60
 EMAIL_SUBSCRIBERS = ("eliran@stratoscale.com",)
-MAX_NR_SECONDS_WITHOUT_EVENTS_BEFORE_ALERTING = 3
+MAX_NR_SECONDS_WITHOUT_EVENTS_BEFORE_ALERTING = 60 * 60 * 6
+SEND_ALERTS_BY_MAIL = True
+SENDER_EMAIL = "eliran@stratoscale.com"
+SMTP_SERVER = 'localhost'
 
 
 is_connected = False
@@ -46,23 +54,21 @@ def send_mail(msg):
     try:
         s = smtplib.SMTP(SMTP_SERVER)
     except socket.error:
-        SEND_ALERTS_BY_MAIL = False
-        msg = 'Could not connect to an SMTP server at "{}"'.format(SMTP_SERVER)
+        msg = 'Cannot send email; Could not connect to an SMTP server at "{}".'.format(SMTP_SERVER)
         logging.exception(msg)
         return
     try:
         s.sendmail(msg['From'], EMAIL_SUBSCRIBERS, msg.as_string())
         s.quit()
     except:
-        SEND_ALERTS_BY_MAIL = False
-        logging.exception("Could not send mail...")
+        logging.exception("Could not send mail.")
 
 
 class AllocationsHandler:
     INAUGURATIONS_INDEX = "inaugurations"
     ALLOCATIONS_INDEX = "allocations_2"
 
-    def __init__(self, subscription_mgr, db):
+    def __init__(self, subscription_mgr, db, events_monitor):
         self._hosts_state = dict()
         self._db = db
         self._subscription_mgr = subscription_mgr
@@ -73,18 +79,7 @@ class AllocationsHandler:
         self._latest_allocation_idx = None
         self._host_indices = list()
         self._db_record_id_of_last_requested_allocation = None
-
-        def alert_warn_func(msg):
-            logging.warn(msg)
-            send_mail(msg)
-
-        def alert_info_func(msg):
-            logging.info(msg)
-            send_mail(msg)
-
-        self._events_monitor = EventsMonitor(MAX_NR_SECONDS_WITHOUT_EVENTS_BEFORE_ALERTING,
-                                             self._alert_info_func,
-                                             self._alert_warn_func)
+        self._events_monitor = events_monitor
 
     def run(self):
         self._events_monitor.start()
@@ -389,12 +384,25 @@ def handle_db_disconnection(self, db):
     send_mail(msg)
 
 
+def alert_warn_func(msg):
+    logging.warn(msg)
+    send_mail(msg)
+
+
+def alert_info_func(msg):
+    logging.info(msg)
+    send_mail(msg)
+
+
 def main():
     configure_logger()
     db = elasticsearch.Elasticsearch([{"host": DB_ADDR, "port": DB_PORT}])
     validate_db_connection(db)
     subscription_mgr = create_subscription()
-    allocation_handler = AllocationsHandler(subscription_mgr, db)
+    monitor = events_monitor.EventsMonitor(MAX_NR_SECONDS_WITHOUT_EVENTS_BEFORE_ALERTING,
+                                           alert_info_func,
+                                           alert_warn_func)
+    allocation_handler = AllocationsHandler(subscription_mgr, db, monitor)
     while True:
         try:
             allocation_handler.run()

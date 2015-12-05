@@ -418,7 +418,7 @@ class Test(unittest.TestCase):
     def _generate_instance_with_mocked_event_loop(self):
         self._db = ElasticsearchDBMock()
         subscription_mgr = subscribe.Subscribe("asdasd@@asdasd@@asdasd")
-        instance = AllocationsHandler(subscription_mgr, self._db)
+        instance = AllocationsHandler(subscription_mgr, self._db, mock.Mock())
 
         def queueGetWrapper(*args, **kwargs):
             if self.tested._tasks.qsize() > 0:
