@@ -1,8 +1,5 @@
 RAP_URI = 10.16.3.1
-MODULE_DIRNAME = $(shell basename `pwd`)
-MODULE_NAME = ${subst -,.,$(MODULE_DIRNAME)}
-EGG_BASENAME = ${MODULE_NAME}.egg
-SERVICES_FILENAMES = $(shell find -maxdepth 1 -name "*.service" | sed 's/.\///g')
+EGG_BASENAME = ${SERVICE}.egg
 PYTHON_FILES = $(shell find py -name "*.py")
 PYTHON_FILES_PATH_FROM_PY_ROOT = $(shell find py -name "*.py" | cut -d "/" -f 2-)
 SERVICES_DEPLOYMENT_PATH = $(shell python get_system_setting.py serviceFilesDirPath)
@@ -24,22 +21,24 @@ build/${EGG_BASENAME}: validate_requirements ${PYTHON_FILES}
 
 -include build/$(EGG_BASENAME).dep
 
-install: build/$(EGG_BASENAME)
-	-for _service in ${SERVICES_FILENAMES} ; do \
-		sudo systemctl stop $$_service ; \
-	done
-	-sudo mkdir /usr/share/$(MODULE_NAME)
-	sudo cp build/$(EGG_BASENAME) /usr/share/$(MODULE_NAME)
-	for _service in ${SERVICES_FILENAMES} ; do \
-		sudo sh -c "sed 's/<RAP_URI>/${RAP_URI}/g' $$_service | sed 's/<PYTHONPATH>/\/usr\/share\/$(MODULE_NAME)\/$(EGG_BASENAME)/g' > '${SERVICES_DEPLOYMENT_PATH}/$$_service'" ; \
-		sudo systemctl enable $$_service ; \
-	done
+.PHONY: install
+install:
+	make install_service SERVICE=rackattack-hosts-stats
+	make install_service SERVICE=rackattack-allocatio-stats
+
+.PHONY: install_service
+install_service: clean build/$(EGG_BASENAME)
+	-sudo systemctl stop ${SERVICE}.service
+	-sudo mkdir /usr/share/${SERVICE}
+	sudo cp build/$(EGG_BASENAME) /usr/share/${SERVICE}
+	sudo sh -c "sed 's/<RAP_URI>/${RAP_URI}/g' ${SERVICE}.service | sed 's/<PYTHONPATH>/\/usr\/share\/$(SERVICE)\/$(EGG_BASENAME)/g' > '${SERVICES_DEPLOYMENT_PATH}/${SERVICE}.service'"
+	sudo systemctl enable ${SERVICE}
 
 uninstall:
-#	-sudo systemctl stop $(SERVICE_BASENAME)
-#	-sudo systemctl disable $(SERVICE_BASENAME)
-#	-sudo rm -fr /usr/lib/systemd/system/$(SERVICE_BASENAME)
-	sudo rm -fr /usr/share/$(MODULE_NAME)
+	-sudo systemctl stop $(SERVICE).service
+	-sudo systemctl disable $(SERVICE).service
+	-sudo rm -fr ${SERVICES_DEPLOYMENT_PATH}/$(SERVICE).service
+	sudo rm -fr /usr/share/$(SERVICE)
 
 .PHONY: validate_requirements
 validate_requirements:
