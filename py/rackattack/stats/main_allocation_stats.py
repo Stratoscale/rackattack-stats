@@ -66,7 +66,7 @@ def send_mail(msg):
 
 class AllocationsHandler:
     INAUGURATIONS_INDEX = "inaugurations"
-    ALLOCATIONS_INDEX = "allocations_2"
+    ALLOCATIONS_INDEX = "allocations"
 
     def __init__(self, subscription_mgr, db, events_monitor):
         self._hosts_state = dict()
