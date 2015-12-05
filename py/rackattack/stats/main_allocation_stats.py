@@ -6,6 +6,7 @@ import pprint
 import logging
 import datetime
 import threading
+import traceback
 import elasticsearch
 from functools import partial
 from rackattack.tcp import subscribe
