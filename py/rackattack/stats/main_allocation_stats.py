@@ -342,8 +342,8 @@ def validate_db_connection(db, is_first_connection_attempt=True):
     is_reconnection = not is_first_connection_attempt
     while not is_connected:
         if is_reconnection:
-            logging.info("Will try to reconnect again in {} seconds..." \
-                .format(DB_RECONNECTION_ATTEMPTS_INTERVAL))
+            logging.info("Will try to reconnect again in {} seconds..."
+                         .format(DB_RECONNECTION_ATTEMPTS_INTERVAL))
             time.sleep(DB_RECONNECTION_ATTEMPTS_INTERVAL)
             msg = "Reconnecting to the DB (Elasticsearch address: {}:{})...".format(DB_ADDR, DB_PORT)
         else:
