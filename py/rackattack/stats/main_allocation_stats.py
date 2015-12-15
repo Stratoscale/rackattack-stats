@@ -203,7 +203,7 @@ class AllocationsHandler:
             (datetime_from_timestamp(time.time()) - record["creation_time"]).total_seconds()
         if record["done"]:
             record["test_duration"] = \
-                (datetime_from_timestamp(time.time()) - record["inauguration_duration"]).total_seconds()
+                (datetime_from_timestamp(time.time()) - record["creation_time"]).total_seconds()
         self._db.update(index=self.ALLOCATIONS_INDEX,
                         doc_type='allocation',
                         id=record_id,
