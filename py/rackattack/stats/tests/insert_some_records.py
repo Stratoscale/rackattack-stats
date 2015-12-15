@@ -142,6 +142,7 @@ class Test(unittest.TestCase):
         alloc_msg = self.generate_allocation_creation_message_from_request_message(req_msg)
         self.generate_allocation_creation_flow(alloc_msg)
         self.generate_inauguration_flow_for_all_hosts(alloc_msg)
+        self.generate_allocation_done_flow(alloc_msg["allocationID"])
         self.generate_allocation_death_flow(alloc_msg)
         self.validate_db()
         self.validate_open_registerations()
@@ -152,6 +153,7 @@ class Test(unittest.TestCase):
         alloc_msg = self.generate_allocation_creation_message_from_request_message(req_msg)
         self.generate_allocation_creation_flow(alloc_msg)
         self.generate_inauguration_flow_for_all_hosts(alloc_msg)
+        self.generate_allocation_done_flow(alloc_msg["allocationID"])
         self.generate_allocation_death_flow(alloc_msg)
         self.validate_db()
         self.validate_open_registerations()
@@ -162,6 +164,7 @@ class Test(unittest.TestCase):
         alloc_msg = self.generate_allocation_creation_message_from_request_message(req_msg)
         self.generate_allocation_creation_flow(alloc_msg)
         self.generate_inauguration_flow_for_all_hosts(alloc_msg)
+        self.generate_allocation_done_flow(alloc_msg["allocationID"])
         self.generate_allocation_death_flow(alloc_msg)
         self.validate_db()
         self.validate_open_registerations()
@@ -331,6 +334,16 @@ class Test(unittest.TestCase):
         self.validate_db()
         self.validate_open_registerations()
 
+    def test_allocation_with_no_done_message(self):
+        req_msg = self.generate_allocation_request_message(nr_hosts=1)
+        self.generate_allocation_request_flow(req_msg)
+        alloc_msg = self.generate_allocation_creation_message_from_request_message(req_msg)
+        self.generate_allocation_creation_flow(alloc_msg)
+        self.generate_inauguration_flow_for_all_hosts(alloc_msg)
+        self.generate_allocation_death_flow(alloc_msg)
+        self.validate_db()
+        self.validate_open_registerations()
+
     def validate_open_registerations(self):
         """Validate that there's no leak of registerations."""
         subscribed_allocation_ids = set(self.tested._allocation_subscriptions.keys())
@@ -382,37 +395,26 @@ class Test(unittest.TestCase):
         if allocation_report_expected:
             self.modifiy_expected_highest_phase(allocation_id, phase="done")
 
-    def generate_inauguration_flow_for_all_hosts(self, alloc_msg, nr_progress_messages_per_host=10,
-                                                 inauguration_report_expected=True):
+    def generate_inauguration_flow_for_all_hosts(self, alloc_msg, nr_progress_messages_per_host=10):
         for _, state_machine in alloc_msg['allocated'].iteritems():
             host_id = state_machine.hostImplementation().id()
             self.generate_inauguration_flow_for_single_host(
-                host_id, alloc_msg["allocationID"], nr_progress_messages_per_host,
-                inauguration_report_expected=inauguration_report_expected)
+                host_id, alloc_msg["allocationID"], nr_progress_messages_per_host)
 
     def generate_inauguration_flow_for_single_host(self, host_id, allocation_id,
-                                                   nr_progress_messages_per_host=10,
-                                                   inauguration_report_expected=True):
+                                                   nr_progress_messages_per_host=10):
         for message_nr in xrange(nr_progress_messages_per_host):
             chain_get_count = (message_nr * 10, message_nr * 10)
             progress_message = dict(id=host_id, status=dict(progress=dict(state='fetching',
                                                                           chainGetCount=chain_get_count)))
-            if inauguration_report_expected:
-                self.mgr.inaugurations_callbacks[host_id](progress_message)
-        if inauguration_report_expected:
-            self.assertIn(host_id, self.mgr.inaugurations_callbacks)
-        else:
-            self.assertNotIn(host_id, self.mgr.inaugurations_callbacks)
+            self.mgr.inaugurations_callbacks[host_id](progress_message)
+        self.assertIn(host_id, self.mgr.inaugurations_callbacks)
         done_message = dict(id=host_id, status='done')
         self.mgr.inaugurations_callbacks[host_id](done_message)
         self._continue_with_server()
-        if inauguration_report_expected:
-            self.assertNotIn(host_id, self.mgr.inaugurations_callbacks)
-            self.expected_reported_inaugurated_hosts.append(host_id)
-            self.uninaugurated_hosts_of_open_reported_allocations[allocation_id].remove(host_id)
-
-    def generate_new_allocation_flow(self):
-        return message
+        self.assertNotIn(host_id, self.mgr.inaugurations_callbacks)
+        self.expected_reported_inaugurated_hosts.append(host_id)
+        self.uninaugurated_hosts_of_open_reported_allocations[allocation_id].remove(host_id)
 
     def generate_allocation_death_flow(self, alloc_msg, is_allocation_report_expected=True, reason="freed"):
         allocation_id = alloc_msg['allocationID']
@@ -464,15 +466,9 @@ class Test(unittest.TestCase):
                                nodes=nodes,
                                highest_phase_reached="created",
                                allocation_id=alloc_msg["allocationID"])
-        was_allocation_request_reported = self.expected_reported_allocations and \
-            self.expected_reported_allocations[-1]["highest_phase_reached"] == "requested"
-        if was_allocation_request_reported:
-            allocation = self.expected_reported_allocations[-1]
-            allocation.update(allocation_info)
-        else:
-            allocation = dict()
-            allocation.update(allocation_info)
-            self.expected_reported_allocations.append(allocation)
+        assert self.expected_reported_allocations[-1]["highest_phase_reached"] == "requested"
+        allocation = self.expected_reported_allocations[-1]
+        allocation.update(allocation_info)
 
     def generate_allocation_creation_flow(self, alloc_msg, is_allocation_report_expected=True):
         allocation_id = alloc_msg['allocationID']
