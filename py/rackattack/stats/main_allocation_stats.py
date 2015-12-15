@@ -78,7 +78,7 @@ class AllocationsHandler:
         self._tasks = Queue.Queue()
         self._latest_allocation_idx = None
         self._host_indices = list()
-        self._db_record_id_of_last_requested_allocation = None
+        self._last_requested_allocation = None
         self._events_monitor = events_monitor
 
     def run(self):
@@ -138,7 +138,6 @@ class AllocationsHandler:
     def _unsubscribe_allocation(self, allocation_idx):
         """Precondition: allocation is subscribed to."""
         self._allocation_subscriptions.remove(allocation_idx)
-        self._subscription_mgr.unregisterForAllocation(allocation_idx)
         allocated_hosts = [host_id for host_id, host in self._hosts_state.iteritems() if
                            host['allocation_idx'] == allocation_idx]
         uninaugurated_hosts = [host_id for host_id in allocated_hosts if
@@ -155,33 +154,6 @@ class AllocationsHandler:
         for host in allocated_hosts:
             del self._hosts_state[host]
 
-    def _is_allocation_dead(self, allocation_idx):
-        result = self._rackattack_client.call('allocation__dead', id=allocation_idx)
-        if result is None:
-            return False
-        return result
-
-    def _allocation_handler(self, message, allocation_idx):
-        logging.debug('_allocation_handler: {} {}'.format(allocation_idx, message))
-        if allocation_idx not in self._allocation_subscriptions:
-            logging.info("Got a status message for an unknown allocation: {}. Ignoging.".format(message))
-            return
-        if message.get('event', None) == "changedState":
-            logging.info('Inauguration stage for allocation {} is over.'.format(allocation_idx))
-            self._unsubscribe_allocation(allocation_idx)
-        elif message.get('event', None) == "providerMessage":
-            logging.info("Rackattack provider says: %(message)s", dict(message=message['message']))
-        elif message.get('event', None) == "withdrawn":
-            logging.info("Rackattack provider widthdrew allocation: '%(message)s",
-                         dict(message=message['message']))
-            self._unsubscribe_allocation(allocation_idx)
-        else:
-            logging.error("Unrecognized message: {}. Quitting.".format(message))
-            self.stop()
-
-    def _pika_allocation_handler(self, idx, message):
-        self._tasks.put([None, self._allocation_handler, message, dict(allocation_idx=idx)])
-
     def _pika_all_allocations_handler(self, message):
         self._tasks.put([None, self._all_allocations_handler, message, None], block=True)
 
@@ -195,79 +167,78 @@ class AllocationsHandler:
         record_metadata = self._db.create(index=self.ALLOCATIONS_INDEX,
                                           doc_type='allocation',
                                           body=record)
-        self._db_record_id_of_last_requested_allocation = record_metadata["_id"]
+        self._last_requested_allocation = (record_metadata["_id"], record)
 
     def _store_allocation_creation(self, message):
-        nodes = self.get_nodes_list_from_requirements(message["requirements"])
-        self.update_nodes_list_with_allocated(nodes, message["allocated"])
-        nr_nodes = len(nodes)
-        record = dict(nodes=nodes,
-                      nr_nodes=nr_nodes,
-                      allocationInfo=message["allocationInfo"],
-                      highest_phase_reached="created",
-                      allocation_id=message["allocationID"])
-        if self._db_record_id_of_last_requested_allocation is None:
-            record["date"] = datetime_from_timestamp(time.time())
-            self._db.create(index=self.ALLOCATIONS_INDEX,
-                            doc_type='allocation',
-                            body=record)
-        else:
-            self._db.update(index=self.ALLOCATIONS_INDEX,
-                            doc_type='allocation',
-                            id=self._db_record_id_of_last_requested_allocation,
-                            body=dict(doc=record))
+        assert self._last_requested_allocation is not None
+        record_id, record = self._last_requested_allocation
+        self.update_nodes_list_with_allocated(record, message["allocated"])
+        record.update(dict(nr_nodes=len(record["nodes"]),
+                           highest_phase_reached="created",
+                           allocation_id=message["allocationID"]))
+        self._db.update(index=self.ALLOCATIONS_INDEX,
+                        doc_type='allocation',
+                        id=record_id,
+                        body=dict(doc=record))
 
     def _all_allocations_handler(self, message):
+        event = message["event"]
+        assert event in ("requested", "rejected", "created", "done", "dead"), event
         if len(self._allocation_subscriptions) == MAX_NR_ALLOCATIONS:
             logging.error("Something has gone wrong; Too many open allocations. Quitting")
             self.stop(remove_pending_events=True)
             return
-        if message['event'] == 'requested':
+        if message["event"] == "requested":
             self._store_current_requested_allocation(message)
-            return
-        assert message['event'] == 'created'
-        logging.info('New allocation: {}'.format(message))
-        self._store_allocation_creation(message)
-        idx = message['allocationID']
-        if self._latest_allocation_idx is None:
-            self._latest_allocation_idx = idx
-        elif idx < self._latest_allocation_idx:
-            logging.error("Got an allocation index {} which is smaller than the previous one ({}) "
-                          "(could RackAttack have been restarted?). Quitting."
-                          .format(idx, self._latest_allocation_idx))
-            self.stop(remove_pending_events=True)
-            return
-        info = message['allocationInfo']
-        requirements = message['requirements']
-        hosts = message['allocated']
-        logging.debug('New allocation: {}.'.format(hosts))
-        logging.info('Subscribing to new allocation (#{}).'.format(idx))
-        allocation_handler = partial(self._pika_allocation_handler, idx)
-        self._subscription_mgr.registerForAllocation(idx, allocation_handler)
-        logging.info('Susbcribed')
-        self._allocation_subscriptions.add(idx)
-        allocation_unsubscribed_from_due_to_new_allocation = set()
-        for name, host_id in hosts.iteritems():
-            if host_id in self._hosts_state:
-                existing_allocation = self._hosts_state[host_id]["allocation_idx"]
-                assert existing_allocation not in allocation_unsubscribed_from_due_to_new_allocation
-                logging.warn("Allocation {} was allocated with a host which is already used by "
-                             "another allocation ({}). Unsubscribing from the latter first..."
-                             .format(idx, existing_allocation))
-                self._unsubscribe_allocation(existing_allocation)
-                allocation_unsubscribed_from_due_to_new_allocation.add(existing_allocation)
-                assert host_id not in self._hosts_state
-            # Update hosts state
-            self._hosts_state[host_id] = dict(start_timestamp=time.time(),
-                                              name=name,
-                                              allocation_idx=idx,
-                                              inauguration_done=False,
-                                              **requirements[name])
-            assert not set(info.keys()).intersection(set(self._hosts_state.keys()))
-            self._hosts_state[host_id].update(info)
-            logging.info("Subscribing to inaugurator events of: {}.".format(host_id))
-            self._subscription_mgr.registerForInagurator(host_id, self._pika_inauguration_handler)
-            logging.info("Subscribed.")
+        elif message["event"] == "created":
+            logging.info('New allocation: {}'.format(message))
+            if self._last_requested_allocation is None:
+                logging.info('Skipping this allocation since the request message did not arrive.')
+                return
+            self._store_allocation_creation(message)
+            idx = message['allocationID']
+            if self._latest_allocation_idx is None:
+                self._latest_allocation_idx = idx
+            elif idx < self._latest_allocation_idx:
+                logging.error("Got an allocation index {} which is smaller than the previous one ({}) "
+                              "(could RackAttack have been restarted?). Quitting."
+                              .format(idx, self._latest_allocation_idx))
+                self.stop(remove_pending_events=True)
+                return
+            hosts = message['allocated']
+            logging.debug('New allocation: {}.'.format(hosts))
+            self._allocation_subscriptions.add(idx)
+            allocation_unsubscribed_from_due_to_new_allocation = set()
+            for name, host_id in hosts.iteritems():
+                if host_id in self._hosts_state:
+                    existing_allocation = self._hosts_state[host_id]["allocation_idx"]
+                    assert existing_allocation not in allocation_unsubscribed_from_due_to_new_allocation
+                    logging.warn("Allocation {} was allocated with a host which is already used by "
+                                 "another allocation ({}). Unsubscribing from the latter first..."
+                                 .format(idx, existing_allocation))
+                    self._unsubscribe_allocation(existing_allocation)
+                    allocation_unsubscribed_from_due_to_new_allocation.add(existing_allocation)
+                    assert host_id not in self._hosts_state
+                # Update hosts state
+                self._hosts_state[host_id] = dict(start_timestamp=time.time(),
+                                                  name=name,
+                                                  allocation_idx=idx,
+                                                  inauguration_done=False)
+                logging.info("Subscribing to inaugurator events of: {}.".format(host_id))
+                self._subscription_mgr.registerForInagurator(host_id, self._pika_inauguration_handler)
+                logging.info("Subscribed.")
+        elif event == "done":
+            allocation_id = message['allocationID']
+            logging.info('Inauguration stage for allocation {} is over.'.format(allocation_idx))
+            self._unsubscribe_allocation(allocation_id)
+        elif event == "dead":
+            allocation_id = message['allocationID']
+            if allocation_id not in self._allocation_subscriptions:
+                logging.info("Ignorning creation message for allocation {} since its request message was "
+                             "skipped.".format(allocation_id))
+                return
+            logging.info('Allocation {} is dead.'.format(allocation_id))
+            self._unsubscribe_allocation(allocation_id)
 
     def _add_inauguration_record_to_db(self, host_id):
         index = 'allocations_'
@@ -326,9 +297,8 @@ class AllocationsHandler:
             result.append(node)
         return result
 
-    @classmethod
-    def update_nodes_list_with_allocated(cls, nodes, allocated):
-        for node in nodes:
+    def update_nodes_list_with_allocated(self, allocation_record, allocated):
+        for node in allocation_record["nodes"]:
             node_name = node["node_name"]
             node["server_name"] = allocated[node_name]
 
