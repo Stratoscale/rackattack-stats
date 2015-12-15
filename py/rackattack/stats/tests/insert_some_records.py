@@ -404,9 +404,9 @@ class Test(unittest.TestCase):
     def generate_inauguration_flow_for_single_host(self, host_id, allocation_id,
                                                    nr_progress_messages_per_host=10):
         for message_nr in xrange(nr_progress_messages_per_host):
-            chain_get_count = (message_nr * 10, message_nr * 10)
-            progress_message = dict(id=host_id, status=dict(progress=dict(state='fetching',
-                                                                          chainGetCount=chain_get_count)))
+            chain_get_count = [message_nr * 10, message_nr * 10]
+            progress_message = dict(id=host_id, status="progress",
+                                    progress=dict(state='fetching', chainGetCount=chain_get_count))
             self.mgr.inaugurations_callbacks[host_id](progress_message)
         self.assertIn(host_id, self.mgr.inaugurations_callbacks)
         done_message = dict(id=host_id, status='done')
