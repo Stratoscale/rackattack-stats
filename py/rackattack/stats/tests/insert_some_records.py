@@ -281,6 +281,13 @@ class Test(unittest.TestCase):
         self.validate_db()
         self.validate_open_registerations()
 
+    def test_allocation_rejection_for_an_unreported_allocation(self):
+        msg = self.generate_allocation_request_message(nr_hosts=10)
+        self.generate_allocation_rejection_flow(reason="what a cool reason",
+                                                allocation_report_expected=False)
+        self.validate_db()
+        self.validate_open_registerations()
+
     def test_allocation_died_after_creation(self):
         req_msg = self.generate_allocation_request_message()
         self.generate_allocation_request_flow(req_msg)
@@ -527,14 +534,15 @@ class Test(unittest.TestCase):
         self.put_allocation_creation_unique_fields(message)
         return message
 
-    def generate_allocation_rejection_flow(self, reason):
+    def generate_allocation_rejection_flow(self, reason, allocation_report_expected=True):
         self.publish.allocationRejected(reason=reason)
         self._continue_with_server()
-        allocation_info = dict()
-        allocation_info["highest_phase_reached"] = "rejected"
-        allocation_info["reason"] = reason
-        allocation = self.expected_reported_allocations[-1]
-        allocation.update(allocation_info)
+        if allocation_report_expected:
+            allocation_info = dict()
+            allocation_info["highest_phase_reached"] = "rejected"
+            allocation_info["reason"] = reason
+            allocation = self.expected_reported_allocations[-1]
+            allocation.update(allocation_info)
 
     @classmethod
     def get_expected_nodes_list_from_requirements(cls, requirements):
