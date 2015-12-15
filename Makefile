@@ -9,8 +9,13 @@ all: check_convention build
 check_convention:
 	pep8 py --max-line-length=109
 
+COVERED_FILES=py/rackattack/stats/main_allocation_stats.py,py/rackattack/stats/tests/insert_some_records.py
 unittest:
-	UPSETO_JOIN_PYTHON_NAMESPACES=yes PYTHONPATH=py python py/rackattack/stats/tests/insert_some_records.py
+	UPSETO_JOIN_PYTHON_NAMESPACES=Yes PYTHONPATH=py python -m coverage run -m rackattack.stats.tests.insert_some_records
+	python -m coverage report --show-missing --fail-under=10 --include=$(COVERED_FILES)
+
+run_with_mocked_db:
+	UPSETO_JOIN_PYTHON_NAMESPACES=yes PYTHONPATH=py RACKATTACK_PROVIDER=tcp://rackattack-provider.dc1.strato:1014@@amqp://guest:guest@rackattack-provider.dc1.strato:1013@@http://rackattack-provider.dc1.strato:1016 python py/rackattack/stats/tests/run_with_mocked_db.py
 
 .PHONY: build
 build: build/$(EGG_BASENAME)
