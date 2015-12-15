@@ -115,14 +115,21 @@ def fetch_nodes_stats(timestamp):
     states = list(set([host['state'] for host in stats['hosts']]))
     for idx, _state in enumerate(states):
         record = {'state': _state,
-                  'states_count': len([host for host in stats['hosts'] if
-                                       host['state'] == _state]),
+                  'states_count': len([host for host in stats['hosts'] if host['state'] == _state]),
                   'date': datetime_now}
         id = "%13d%03d" % (unixtime, idx)
         logger.info("Inserting a record to the DB: {}...".format(record))
         db.create(index='states', doc_type='state_count', body=record, id=id)
         logger.info("Record inserted to DB.")
 
+    pools = list(set([host['pool'] for host in stats['hosts']]))
+    for idx, _pool in enumerate(pools):
+        record = {'pool': _pool,
+                  'count': len([host for host in stats['hosts'] if host['pool'] == _pool]),
+                  'date': datetime_now}
+        logger.info("Inserting a record to the DB: {}...".format(record))
+        db.create(index='pool', doc_type='pool_count', body=record)
+        logger.info("Record inserted to DB.")
     flush_msgs_to_mail()
 
 
