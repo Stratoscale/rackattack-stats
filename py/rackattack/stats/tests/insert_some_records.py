@@ -96,6 +96,15 @@ class ElasticsearchDBMock(object):
 
 
 class Test(unittest.TestCase):
+    """
+    Possible allocation flows:
+        requested
+        v requested, rejected
+        requested, created
+        v requested, created, dead
+        requested, created, done
+        requested, created, done, dead
+    """
     def setUp(self):
         rackattack.tcp.subscribe.Subscribe = SubscribeMock
         SubscribeMock.instances = []
@@ -251,13 +260,13 @@ class Test(unittest.TestCase):
         self.validate_db()
         self.validate_open_registerations()
 
-    def test_one_allocation_request(self):
+    def test_allocation_request(self):
         msg = self.generate_allocation_request_message(nr_hosts=10)
         self.generate_allocation_request_flow(msg)
         self.validate_db()
         self.validate_open_registerations()
 
-    def test_one_allocation_approval(self):
+    def test_allocation_approval(self):
         msg = self.generate_allocation_request_message(nr_hosts=10)
         self.generate_allocation_request_flow(msg)
         msg = self.generate_allocation_creation_message_from_request_message(msg)
@@ -265,10 +274,61 @@ class Test(unittest.TestCase):
         self.validate_db()
         self.validate_open_registerations()
 
+    def test_allocation_rejection(self):
+        msg = self.generate_allocation_request_message(nr_hosts=10)
+        self.generate_allocation_request_flow(msg)
+        self.generate_allocation_rejection_flow(reason="what a cool reason")
+        self.validate_db()
+        self.validate_open_registerations()
+
+    def test_allocation_died_after_creation(self):
+        req_msg = self.generate_allocation_request_message()
+        self.generate_allocation_request_flow(req_msg)
+        alloc_msg = self.generate_allocation_creation_message_from_request_message(req_msg)
+        self.generate_allocation_creation_flow(alloc_msg)
+        self.generate_allocation_death_flow(alloc_msg, reason="withdrawn")
+        self.validate_db()
+        self.validate_open_registerations()
+
+    def test_allocation_died_after_done(self):
+        req_msg = self.generate_allocation_request_message()
+        self.generate_allocation_request_flow(req_msg)
+        alloc_msg = self.generate_allocation_creation_message_from_request_message(req_msg)
+        self.generate_allocation_creation_flow(alloc_msg)
+        self.generate_inauguration_flow_for_all_hosts(alloc_msg)
+        self.generate_allocation_death_flow(alloc_msg, reason="withdrawn")
+        self.validate_db()
+        self.validate_open_registerations()
+
+    def test_allocation_death_for_an_unreported_allocation(self):
+        req_msg = self.generate_allocation_request_message()
+        alloc_msg = self.generate_allocation_creation_message_from_request_message(req_msg)
+        self.generate_allocation_death_flow(alloc_msg, reason="freed", is_allocation_report_expected=False)
+        self.validate_db()
+        self.validate_open_registerations()
+
+    def test_allocation_done(self):
+        req_msg = self.generate_allocation_request_message()
+        self.generate_allocation_request_flow(req_msg)
+        alloc_msg = self.generate_allocation_creation_message_from_request_message(req_msg)
+        self.generate_allocation_creation_flow(alloc_msg)
+        self.generate_inauguration_flow_for_all_hosts(alloc_msg)
+        self.generate_allocation_done_flow(alloc_msg["allocationID"])
+        self.validate_db()
+        self.validate_open_registerations()
+
+    def test_allocation_done_for_unreported_allocations(self):
+        req_msg = self.generate_allocation_request_message()
+        alloc_msg = self.generate_allocation_creation_message_from_request_message(req_msg)
+        self.generate_allocation_done_flow(0, allocation_report_expected=False)
+        self.validate_db()
+        self.validate_open_registerations()
+
     def validate_open_registerations(self):
         """Validate that there's no leak of registerations."""
-        subscribed_allocation_ids = set(self.tested._allocation_subscriptions)
-        expected_subscribed_allocation_ids = set(self.uninaugurated_hosts_of_open_reported_allocations)
+        subscribed_allocation_ids = set(self.tested._allocation_subscriptions.keys())
+        expected_subscribed_allocation_ids = \
+            set(self.uninaugurated_hosts_of_open_reported_allocations.keys())
         self.assertEquals(subscribed_allocation_ids, expected_subscribed_allocation_ids)
 
     def validate_db(self):
@@ -294,14 +354,26 @@ class Test(unittest.TestCase):
                 self.assertEquals(expected["nodes"], actual["nodes"])
                 self.assertEquals(expected["allocationInfo"], actual["allocationInfo"])
                 self.assertEquals(expected["highest_phase_reached"], actual["highest_phase_reached"])
+                self.assertEquals(expected["done"], actual["done"])
+                if expected["done"]:
+                    self.assertIn("inauguration_duration", actual)
                 if expected["highest_phase_reached"] == "created":
                     self.assertEquals(expected["allocation_id"], actual["allocation_id"])
                     last_requested_allocation = expected
+                elif expected["highest_phase_reached"] == "dead" and expected["done"]:
+                    self.assertIn("test_duration", actual)
+                    self.assertIn("allocation_duration", actual)
             else:
                 assert False
         self.assertFalse(self.expected_reported_uninaugurated_hosts)
         self.assertFalse(self.expected_reported_inaugurated_hosts)
         self.assertFalse(self.expected_reported_allocations)
+
+    def generate_allocation_done_flow(self, allocation_id, allocation_report_expected=True):
+        self.publish.allocationDone(allocation_id)
+        self._continue_with_server()
+        if allocation_report_expected:
+            self.modifiy_expected_highest_phase(allocation_id, phase="done")
 
     def generate_inauguration_flow_for_all_hosts(self, alloc_msg, nr_progress_messages_per_host=10,
                                                  inauguration_report_expected=True):
@@ -335,14 +407,24 @@ class Test(unittest.TestCase):
     def generate_new_allocation_flow(self):
         return message
 
-    def generate_allocation_death_flow(self, alloc_msg, is_allocation_report_expected=True):
+    def generate_allocation_death_flow(self, alloc_msg, is_allocation_report_expected=True, reason="freed"):
         allocation_id = alloc_msg['allocationID']
-        self.send_allocation_death_message(allocation_id)
+        self.send_allocation_death_message(allocation_id, reason=reason)
         if is_allocation_report_expected:
             self.wait_for_allocation_unregisteration(alloc_msg, is_allocation_report_expected)
+            self.modifiy_expected_highest_phase(allocation_id, phase="dead")
         self.open_allocations_count -= 1
 
-    def send_allocation_death_message(self, allocation_id, reason="freed"):
+    def modifiy_expected_highest_phase(self, allocation_id, phase):
+        potential_allocations = [allocation for allocation in self.expected_reported_allocations if
+                                 allocation["allocation_id"] == allocation_id]
+        assert len(potential_allocations) == 1
+        allocation = potential_allocations[0]
+        allocation["highest_phase_reached"] = phase
+        if phase == "done":
+            allocation["done"] = True
+
+    def send_allocation_death_message(self, allocation_id, reason):
         self.publish.allocationDied(allocationID=allocation_id, reason=reason, moreInfo="Because i wanna")
         self._continue_with_server()
 
@@ -405,9 +487,10 @@ class Test(unittest.TestCase):
         nodes = self.get_expected_nodes_list_from_requirements(msg["requirements"])
         expected_reported_allocation = dict(nodes=nodes,
                                             allocationInfo=msg["allocationInfo"],
-                                            highest_phase_reached="requested")
+                                            highest_phase_reached="requested",
+                                            done=False)
         self.expected_reported_allocations.append(expected_reported_allocation)
-        self.mgr.all_allocations_callback(msg)
+        self.publish.allocationRequested(msg["requirements"], msg["allocationInfo"])
         self._continue_with_server()
 
     def generate_generic_allocation_message(self, nr_hosts=2):
@@ -443,6 +526,15 @@ class Test(unittest.TestCase):
     def generate_allocation_creation_message_from_request_message(self, message):
         self.put_allocation_creation_unique_fields(message)
         return message
+
+    def generate_allocation_rejection_flow(self, reason):
+        self.publish.allocationRejected(reason=reason)
+        self._continue_with_server()
+        allocation_info = dict()
+        allocation_info["highest_phase_reached"] = "rejected"
+        allocation_info["reason"] = reason
+        allocation = self.expected_reported_allocations[-1]
+        allocation.update(allocation_info)
 
     @classmethod
     def get_expected_nodes_list_from_requirements(cls, requirements):

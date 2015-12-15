@@ -74,7 +74,7 @@ class AllocationsHandler:
         self._subscription_mgr = subscription_mgr
         logging.info('Subscribing to all hosts allocations.')
         subscription_mgr.registerForAllAllocations(self._pika_all_allocations_handler)
-        self._allocation_subscriptions = set()
+        self._allocation_subscriptions = dict()
         self._tasks = Queue.Queue()
         self._latest_allocation_idx = None
         self._host_indices = list()
@@ -137,7 +137,7 @@ class AllocationsHandler:
 
     def _unsubscribe_allocation(self, allocation_idx):
         """Precondition: allocation is subscribed to."""
-        self._allocation_subscriptions.remove(allocation_idx)
+        del self._allocation_subscriptions[allocation_idx]
         allocated_hosts = [host_id for host_id, host in self._hosts_state.iteritems() if
                            host['allocation_idx'] == allocation_idx]
         uninaugurated_hosts = [host_id for host_id in allocated_hosts if
@@ -157,25 +157,64 @@ class AllocationsHandler:
     def _pika_all_allocations_handler(self, message):
         self._tasks.put([None, self._all_allocations_handler, message, None], block=True)
 
-    def _store_current_requested_allocation(self, message):
+    def _store_allocation_request(self, message):
         nr_nodes = len(message["requirements"])
         record = dict(allocationInfo=message['allocationInfo'],
                       nodes=self.get_nodes_list_from_requirements(message['requirements']),
                       nr_nodes=nr_nodes,
-                      highest_phase_reached="requested")
+                      highest_phase_reached="requested",
+                      done=False)
         record["date"] = datetime_from_timestamp(time.time())
         record_metadata = self._db.create(index=self.ALLOCATIONS_INDEX,
                                           doc_type='allocation',
                                           body=record)
         self._last_requested_allocation = (record_metadata["_id"], record)
 
+    def _store_allocation_rejection(self, reason):
+        assert self._last_requested_allocation is not None
+        record_id, record = self._last_requested_allocation
+        record["highest_phase_reached"] = "rejected"
+        record["reason"] = reason
+        self._db.update(index=self.ALLOCATIONS_INDEX,
+                        doc_type='allocation',
+                        id=record_id,
+                        body=dict(doc=record))
+
     def _store_allocation_creation(self, message):
         assert self._last_requested_allocation is not None
         record_id, record = self._last_requested_allocation
+        record["highest_phase_reached"] = "created"
         self.update_nodes_list_with_allocated(record, message["allocated"])
         record.update(dict(nr_nodes=len(record["nodes"]),
                            highest_phase_reached="created",
-                           allocation_id=message["allocationID"]))
+                           allocation_id=message["allocationID"],
+                           creation_time=datetime_from_timestamp(time.time())))
+        self._db.update(index=self.ALLOCATIONS_INDEX,
+                        doc_type='allocation',
+                        id=record_id,
+                        body=dict(doc=record))
+        self._allocation_subscriptions[message["allocationID"]] = record_id, record
+
+    def _store_allocation_death(self, allocation_id, reason):
+        record_id, record = self._allocation_subscriptions[allocation_id]
+        record["highest_phase_reached"] = "dead"
+        record["reason"] = reason
+        record["allocation_duration"] = \
+            (datetime_from_timestamp(time.time()) - record["creation_time"]).total_seconds()
+        if record["done"]:
+            record["test_duration"] = \
+                (datetime_from_timestamp(time.time()) - record["inauguration_duration"]).total_seconds()
+        self._db.update(index=self.ALLOCATIONS_INDEX,
+                        doc_type='allocation',
+                        id=record_id,
+                        body=dict(doc=record))
+
+    def _store_allocation_done(self, allocation_id):
+        record_id, record = self._allocation_subscriptions[allocation_id]
+        record["highest_phase_reached"] = "done"
+        record["done"] = True
+        record["inauguration_duration"] = \
+            (datetime_from_timestamp(time.time()) - record["creation_time"]).total_seconds()
         self._db.update(index=self.ALLOCATIONS_INDEX,
                         doc_type='allocation',
                         id=record_id,
@@ -188,9 +227,19 @@ class AllocationsHandler:
             logging.error("Something has gone wrong; Too many open allocations. Quitting")
             self.stop(remove_pending_events=True)
             return
-        if message["event"] == "requested":
-            self._store_current_requested_allocation(message)
-        elif message["event"] == "created":
+        if event == "requested":
+            self._store_allocation_request(message)
+        elif event == "rejected":
+            if self._last_requested_allocation is None:
+                logging.info("Got an allocation rejection message without a requeest message before. "
+                             "Skipping.")
+                return
+            if self._last_requested_allocation[1]["highest_phase_reached"] != "requested":
+                logging.error("Got an allocation rejection message in an invalid context (last event was:"
+                              " {}".format(self._last_requested_allocation["highest_phase_reached"]))
+                return
+            self._store_allocation_rejection(reason=message["reason"])
+        elif event == "created":
             logging.info('New allocation: {}'.format(message))
             if self._last_requested_allocation is None:
                 logging.info('Skipping this allocation since the request message did not arrive.')
@@ -207,7 +256,6 @@ class AllocationsHandler:
                 return
             hosts = message['allocated']
             logging.debug('New allocation: {}.'.format(hosts))
-            self._allocation_subscriptions.add(idx)
             allocation_unsubscribed_from_due_to_new_allocation = set()
             for name, host_id in hosts.iteritems():
                 if host_id in self._hosts_state:
@@ -229,8 +277,13 @@ class AllocationsHandler:
                 logging.info("Subscribed.")
         elif event == "done":
             allocation_id = message['allocationID']
-            logging.info('Inauguration stage for allocation {} is over.'.format(allocation_idx))
-            self._unsubscribe_allocation(allocation_id)
+            if allocation_id not in self._allocation_subscriptions:
+                logging.info("Ignorning done message for allocation {} since its request message was "
+                             "skipped.".format(allocation_id))
+                return
+            allocation_id = message['allocationID']
+            logging.info('Inauguration stage for allocation {} is over.'.format(allocation_id))
+            self._store_allocation_done(allocation_id)
         elif event == "dead":
             allocation_id = message['allocationID']
             if allocation_id not in self._allocation_subscriptions:
@@ -238,6 +291,7 @@ class AllocationsHandler:
                              "skipped.".format(allocation_id))
                 return
             logging.info('Allocation {} is dead.'.format(allocation_id))
+            self._store_allocation_death(allocation_id, reason=message["reason"])
             self._unsubscribe_allocation(allocation_id)
 
     def _add_inauguration_record_to_db(self, host_id):
