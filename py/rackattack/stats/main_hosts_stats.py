@@ -119,7 +119,7 @@ def fetch_nodes_stats(timestamp):
                   'date': datetime_now}
         id = "%13d%03d" % (unixtime, idx)
         logger.info("Inserting a record to the DB: {}...".format(record))
-        db.create(index='states', doc_type='state_count', body=record, id=id)
+        db.create(index='states_1', doc_type='state_count', body=record, id=id)
         logger.info("Record inserted to DB.")
 
     pools = list(set([host['pool'] for host in stats['hosts']]))
