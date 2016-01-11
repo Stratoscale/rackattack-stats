@@ -434,7 +434,7 @@ class Test(unittest.TestCase):
             allocation["done"] = True
 
     def send_allocation_death_message(self, allocation_id, reason):
-        self.publish.allocationDied(allocationID=allocation_id, reason=reason, moreInfo="Because i wanna")
+        self.publish.allocationDied(allocationID=allocation_id, reason=reason, message="Because i wanna")
         self._continue_with_server()
 
     def wait_for_allocation_unregisteration(self,
