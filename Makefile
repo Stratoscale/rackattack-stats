@@ -30,7 +30,7 @@ build/${EGG_BASENAME}: validate_requirements ${PYTHON_FILES}
 .PHONY: install
 install:
 	make install_service SERVICE=rackattack-hosts-stats
-	make install_service SERVICE=rackattack-allocatio-stats
+	make install_service SERVICE=rackattack-allocation-stats
 
 .PHONY: install_service
 install_service: validate_requirements clean build/$(EGG_BASENAME)
