@@ -278,7 +278,7 @@ class AllocationsHandler:
         elif event == "done":
             allocation_id = message['allocationID']
             if allocation_id not in self._allocation_subscriptions:
-                logging.info("Ignorning done message for allocation {} since its request message was "
+                logging.info("Ignoring done message for allocation {} since its request message was "
                              "skipped.".format(allocation_id))
                 return
             allocation_id = message['allocationID']
@@ -287,7 +287,7 @@ class AllocationsHandler:
         elif event == "dead":
             allocation_id = message['allocationID']
             if allocation_id not in self._allocation_subscriptions:
-                logging.info("Ignorning creation message for allocation {} since its request message was "
+                logging.info("Ignoring creation message for allocation {} since its request message was "
                              "skipped.".format(allocation_id))
                 return
             logging.info('Allocation {} is dead.'.format(allocation_id))
