@@ -168,7 +168,7 @@ class AllocationsHandler:
         record_metadata = self._db.create(index=self.ALLOCATIONS_INDEX,
                                           doc_type='allocation',
                                           body=record)
-        self._last_requested_allocation = (record_metadata["_id"], record)
+        return record_metadata["_id"], record
 
     def _store_allocation_rejection(self, reason):
         assert self._last_requested_allocation is not None
@@ -228,7 +228,8 @@ class AllocationsHandler:
             self.stop(remove_pending_events=True)
             return
         if event == "requested":
-            self._store_allocation_request(message)
+            allocation_data = self._store_allocation_request(message)
+            self._last_requested_allocation = allocation_data
         elif event == "rejected":
             if self._last_requested_allocation is None:
                 logging.info("Got an allocation rejection message without a requeest message before. "
@@ -242,7 +243,7 @@ class AllocationsHandler:
         elif event == "created":
             logging.info('New allocation: {}'.format(message))
             if self._last_requested_allocation is None:
-                logging.info('Skipping this allocation since the request message did not arrive.')
+                logging.info("Ignoring allocation creation message since its request message was skipped")
                 return
             self._store_allocation_creation(message)
             idx = message['allocationID']
@@ -287,7 +288,7 @@ class AllocationsHandler:
         elif event == "dead":
             allocation_id = message['allocationID']
             if allocation_id not in self._allocation_subscriptions:
-                logging.info("Ignoring creation message for allocation {} since its request message was "
+                logging.info("Ignoring death message for allocation {} since its request message was "
                              "skipped.".format(allocation_id))
                 return
             logging.info('Allocation {} is dead.'.format(allocation_id))
