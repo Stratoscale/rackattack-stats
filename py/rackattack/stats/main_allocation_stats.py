@@ -245,6 +245,7 @@ class AllocationsHandler:
             if self._last_requested_allocation is None:
                 logging.info("Ignoring allocation creation message since its request message was skipped")
                 return
+            last_requested_allocation = self._last_requested_allocation[1]
             self._store_allocation_creation(message)
             idx = message['allocationID']
             if self._latest_allocation_idx is None:
@@ -275,6 +276,12 @@ class AllocationsHandler:
                                                   inauguration_done=False)
                 logging.info("Subscribing to inaugurator events of: {}.".format(host_id))
                 self._subscription_mgr.registerForInagurator(host_id, self._pika_inauguration_handler)
+                nodes = [node for node in last_requested_allocation["nodes"] if node["node_name"] == name]
+                if nodes:
+                    requirements = nodes[0]["requirements"]
+                    self._hosts_state[host_id].update(requirements)
+                else:
+                    logging.error("Failed to resolve requirmenents for inaugurated host {}".format(name))
                 logging.info("Subscribed.")
         elif event == "done":
             allocation_id = message['allocationID']
@@ -296,9 +303,6 @@ class AllocationsHandler:
             self._unsubscribe_allocation(allocation_id)
 
     def _add_inauguration_record_to_db(self, host_id):
-        index = 'allocations_'
-        doc_type = 'allocation_'
-
         state = self._hosts_state[host_id]
         record_datetime = datetime_from_timestamp(state['start_timestamp'])
 

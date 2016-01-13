@@ -198,7 +198,7 @@ class Test(unittest.TestCase):
         self.generate_allocation_creation_flow(alloc_msg)
         inaugurated_hosts_in_first_allocation = ("charlie", "delta", "golf", "hotel", "india", "juliet")
         for host in inaugurated_hosts_in_first_allocation:
-            self.generate_inauguration_flow_for_single_host(host, alloc_msg["allocationID"])
+            self.generate_inauguration_flow_for_single_host(host, alloc_msg)
         hosts_on_both_allocations = original_hosts_pool[4:4 + nr_hosts_in_allocation]
         self.available_hosts = hosts_on_both_allocations + self.available_hosts
         another_alloc_req = self.generate_allocation_request_message(nr_hosts_in_allocation)
@@ -210,7 +210,7 @@ class Test(unittest.TestCase):
         self.wait_for_allocation_unregisteration(alloc_msg, still_registered=hosts_on_both_allocations)
         inaugurated_hosts_in_second_allocation = ("golf", "hotel", "kilo", "lima", "oscar", "papa")
         for host in inaugurated_hosts_in_second_allocation:
-            self.generate_inauguration_flow_for_single_host(host, another_alloc_msg["allocationID"])
+            self.generate_inauguration_flow_for_single_host(host, another_alloc_msg)
         self.generate_allocation_death_flow(another_alloc_msg)
         self.validate_db()
         self.validate_open_registerations()
@@ -361,11 +361,13 @@ class Test(unittest.TestCase):
             index = record["_index"]
             if index == AllocationsHandler.INAUGURATIONS_INDEX:
                 if record["inauguration_done"]:
-                    expected_host_id = self.expected_reported_inaugurated_hosts.pop(0)
+                    expected = self.expected_reported_inaugurated_hosts.pop(0)
                 else:
-                    expected_host_id = self.expected_reported_uninaugurated_hosts.pop(0)
-                actual_host_id = record['host_id']
-                self.assertEquals(expected_host_id, actual_host_id)
+                    expected = self.expected_reported_uninaugurated_hosts.pop(0)
+                actual = record
+                self.assertEquals(expected["host_id"], actual["host_id"])
+                for key, value in expected["requirements"].iteritems():
+                    self.assertEquals(value, actual[key])
             elif index == AllocationsHandler.ALLOCATIONS_INDEX:
                 expected = self.expected_reported_allocations.pop(0)
                 actual = record
@@ -399,10 +401,11 @@ class Test(unittest.TestCase):
         for _, state_machine in alloc_msg['allocated'].iteritems():
             host_id = state_machine.hostImplementation().id()
             self.generate_inauguration_flow_for_single_host(
-                host_id, alloc_msg["allocationID"], nr_progress_messages_per_host)
+                host_id, alloc_msg, nr_progress_messages_per_host)
 
-    def generate_inauguration_flow_for_single_host(self, host_id, allocation_id,
+    def generate_inauguration_flow_for_single_host(self, host_id, alloc_msg,
                                                    nr_progress_messages_per_host=10):
+        allocation_id = alloc_msg["allocationID"]
         for message_nr in xrange(nr_progress_messages_per_host):
             chain_get_count = [message_nr * 10, message_nr * 10]
             progress_message = dict(id=host_id, status="progress",
@@ -413,8 +416,13 @@ class Test(unittest.TestCase):
         self.mgr.inaugurations_callbacks[host_id](done_message)
         self._continue_with_server()
         self.assertNotIn(host_id, self.mgr.inaugurations_callbacks)
-        self.expected_reported_inaugurated_hosts.append(host_id)
-        self.uninaugurated_hosts_of_open_reported_allocations[allocation_id].remove(host_id)
+        hostName = [hostName for hostName, stateMachine in alloc_msg["allocated"].iteritems() if
+                    stateMachine.hostImplementation().id() == host_id][0]
+        record = dict(host_id=host_id, requirements=alloc_msg["requirements"][hostName])
+        self.expected_reported_inaugurated_hosts.append(record)
+        self.uninaugurated_hosts_of_open_reported_allocations[allocation_id] = \
+            [record for record in self.uninaugurated_hosts_of_open_reported_allocations[allocation_id]
+             if record["host_id"] != host_id]
 
     def generate_allocation_death_flow(self, alloc_msg, is_allocation_report_expected=True, reason="freed"):
         allocation_id = alloc_msg['allocationID']
@@ -483,8 +491,13 @@ class Test(unittest.TestCase):
         if self.open_allocations_count > rackattack.stats.main_allocation_stats.MAX_NR_ALLOCATIONS:
             return
         if is_allocation_report_expected:
-            self.uninaugurated_hosts_of_open_reported_allocations[allocation_id] = \
-                [state_machine.hostImplementation().id() for state_machine in allocated.values()]
+            uninaugurated = dict()
+            self.uninaugurated_hosts_of_open_reported_allocations[allocation_id] = list()
+            for name, stateMachine in allocated.iteritems():
+                host_id = stateMachine.hostImplementation().id()
+                requirements = alloc_msg["requirements"][name]
+                record = dict(host_id=host_id, requirements=requirements)
+                self.uninaugurated_hosts_of_open_reported_allocations[allocation_id].append(record)
 
     def generate_allocation_request_flow(self, msg):
         nodes = self.get_expected_nodes_list_from_requirements(msg["requirements"])
