@@ -237,7 +237,7 @@ class AllocationsHandler:
                 return
             if self._last_requested_allocation[1]["highest_phase_reached"] != "requested":
                 logging.error("Got an allocation rejection message in an invalid context (last event was:"
-                              " {}".format(self._last_requested_allocation["highest_phase_reached"]))
+                              " {}".format(self._last_requested_allocation[1]["highest_phase_reached"]))
                 return
             self._store_allocation_rejection(reason=message["reason"])
         elif event == "created":
