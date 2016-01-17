@@ -1,0 +1,35 @@
+curl -XPUT 'rack01-server10:9200/states_3/?pretty' -d '
+{
+  "states_1" : {
+    "aliases" : { },
+    "mappings" : {
+      "state_count" : {
+        "properties" : {
+          "date" : {
+            "type" : "date",
+            "format" : "strict_date_optional_time||epoch_millis"
+          },
+          "state" : {
+            "index" : "not_analyzed",
+            "type" : "string"
+          },
+          "states_count" : {
+            "type" : "long"
+          }
+        }
+      }
+    },
+    "settings" : {
+      "index" : {
+        "creation_date" : "1448372228505",
+        "number_of_shards" : "5",
+        "number_of_replicas" : "1",
+        "uuid" : "qCtXvONaSe-0DLn7houAsg",
+        "version" : {
+          "created" : "2000099"
+        }
+      }
+    },
+    "warmers" : { }
+  }
+}'
