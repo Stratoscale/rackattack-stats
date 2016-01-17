@@ -163,7 +163,9 @@ class AllocationsHandler:
                       nodes=self.get_nodes_list_from_requirements(message['requirements']),
                       nr_nodes=nr_nodes,
                       highest_phase_reached="requested",
-                      done=False)
+                      done=False,
+                      reason="Unknown",
+                      allocation_duration=0)
         record["date"] = datetime_from_timestamp(time.time())
         record_metadata = self._db.create(index=self.ALLOCATIONS_INDEX,
                                           doc_type='allocation',
