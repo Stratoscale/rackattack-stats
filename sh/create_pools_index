@@ -1,0 +1,33 @@
+curl -XPUT 'rack01-server10:9200/pools_3/?pretty' -d '
+{
+    "aliases" : { },
+    "mappings" : {
+      "pool_count" : {
+        "properties" : {
+          "count" : {
+            "type" : "long"
+          },
+          "date" : {
+            "type" : "date",
+            "format" : "strict_date_optional_time||epoch_millis"
+          },
+          "pool" : {
+            "type" : "string",
+            index: "not_analyzed"
+          }
+        }
+      }
+    },
+    "settings" : {
+      "index" : {
+        "creation_date" : "1450203651928",
+        "number_of_shards" : "5",
+        "number_of_replicas" : "1",
+        "uuid" : "QGTpCGn_T6yveLGcyDLX5g",
+        "version" : {
+          "created" : "2000099"
+        }
+      }
+    },
+    "warmers" : { }
+}'

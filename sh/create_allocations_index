@@ -1,0 +1,129 @@
+curl -XPUT 'rack01-server10:9200/allocations_3/?pretty' -d '
+{
+"aliases" : { },
+"mappings" : {
+    "allocation" : {
+    "properties" : {
+        "allocationInfo" : {
+        "properties" : {
+            "comment" : {
+            "type" : "string",
+            "index": "not_analyzed"
+            },
+            "nice" : {
+            "type" : "long"
+            },
+            "purpose" : {
+            "type" : "string",
+            "index": "not_analyzed"
+            },
+            "user" : {
+            "type" : "string",
+            "index": "not_analyzed"
+            }
+        }
+        },
+        "allocation_duration" : {
+        "type" : "double"
+        },
+        "allocation_id" : {
+        "type" : "long"
+        },
+        "creation_time" : {
+        "type" : "date",
+        "format" : "strict_date_optional_time||epoch_millis"
+        },
+        "date" : {
+        "type" : "date",
+        "format" : "strict_date_optional_time||epoch_millis"
+        },
+        "done" : {
+        "type" : "boolean"
+        },
+        "highest_phase_reached" : {
+        "type" : "string",
+        "index": "not_analyzed"
+        },
+        "inauguration_duration" : {
+        "type" : "double"
+        },
+        "nodes" : {
+        "properties" : {
+            "node_name" : {
+            "type" : "string",
+            "index": "not_analyzed"
+            },
+            "requirements" : {
+            "properties" : {
+                "hardwareConstraints" : {
+                "properties" : {
+                    "minimumCPUs" : {
+                    "type" : "long"
+                    },
+                    "minimumDisk1SizeGB" : {
+                    "type" : "long"
+                    },
+                    "minimumDisk2SizeGB" : {
+                    "type" : "long"
+                    },
+                    "minimumRAMGB" : {
+                    "type" : "long"
+                    },
+                    "minimumcpus" : {
+                    "type" : "long"
+                    },
+                    "minimumramgb" : {
+                    "type" : "long"
+                    },
+                    "pool" : {
+                    "index": "not_analyzed",
+                    "type" : "string"
+                    }
+                }
+                },
+                "imageHint" : {
+                "index": "not_analyzed",
+                "type" : "string"
+                },
+                "imageLabel" : {
+                "index": "not_analyzed",
+                "type" : "string"
+                },
+                "pool" : {
+                "index": "not_analyzed",
+                "type" : "string"
+                }
+            }
+            },
+            "server_name" : {
+            "index": "not_analyzed",
+            "type" : "string"
+            }
+        }
+        },
+        "nr_nodes" : {
+        "type" : "long"
+        },
+        "reason" : {
+        "index": "not_analyzed",
+        "type" : "string"
+        },
+        "test_duration" : {
+        "type" : "double"
+        }
+    }
+    }
+},
+"settings" : {
+    "index" : {
+    "creation_date" : "1449328565407",
+    "number_of_shards" : "5",
+    "number_of_replicas" : "1",
+    "uuid" : "blYIAI3CQqCkDz-Vt9euWA",
+    "version" : {
+        "created" : "2000099"
+    }
+    }
+},
+"warmers" : { }
+}'

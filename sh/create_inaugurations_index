@@ -1,0 +1,99 @@
+curl -XPUT 'rack01-server10:9200/inaugurations_3/?pretty' -d '
+{
+  "inaugurations_2" : {
+    "aliases" : { },
+    "mappings" : {
+      "inauguration" : {
+        "properties" : {
+          "allocation_idx" : {
+            "type" : "long"
+          },
+          "date" : {
+            "type" : "date",
+            "format" : "strict_date_optional_time||epoch_millis"
+          },
+          "end_timestamp" : {
+            "type" : "double"
+          },
+          "hardwareConstraints" : {
+            "properties" : {
+              "minimumCPUs" : {
+                "type" : "long"
+              },
+              "minimumDisk1SizeGB" : {
+                "type" : "long"
+              },
+              "minimumDisk2SizeGB" : {
+                "type" : "long"
+              },
+              "minimumRAMGB" : {
+                "type" : "long"
+              },
+              "minimumcpus" : {
+                "type" : "long"
+              },
+              "minimumramgb" : {
+                "type" : "long"
+              },
+              "pool" : {
+                "index" : "not_analyzed",
+                "type" : "string"
+              }
+            }
+          },
+          "host_id" : {
+            "index" : "not_analyzed",
+            "type" : "string"
+          },
+          "imageHint" : {
+            "index" : "not_analyzed",
+            "type" : "string"
+          },
+          "imageLabel" : {
+            "index" : "not_analyzed",
+            "type" : "string"
+          },
+          "inauguration_done" : {
+            "type" : "boolean"
+          },
+          "inauguration_period_length" : {
+            "type" : "double"
+          },
+          "local_store_count" : {
+            "type" : "long"
+          },
+          "majority_chain_type" : {
+            "index" : "not_analyzed",
+            "type" : "string"
+          },
+          "name" : {
+            "index" : "not_analyzed",
+            "type" : "string"
+          },
+          "pool" : {
+            "index" : "not_analyzed",
+            "type" : "string"
+          },
+          "remote_store_count" : {
+            "type" : "long"
+          },
+          "start_timestamp" : {
+            "type" : "double"
+          }
+        }
+      }
+    },
+    "settings" : {
+      "index" : {
+        "creation_date" : "1452618698222",
+        "number_of_shards" : "5",
+        "number_of_replicas" : "1",
+        "uuid" : "P8uxYq_0QxeiyAvLTPi7GQ",
+        "version" : {
+          "created" : "2000099"
+        }
+      }
+    },
+    "warmers" : { }
+  }
+}'
