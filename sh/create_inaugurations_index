@@ -1,6 +1,5 @@
-curl -XPUT 'rack01-server10:9200/inaugurations_3/?pretty' -d '
+curl -XPUT 'rack01-server10:9200/inaugurations_4/?pretty' -d '
 {
-  "inaugurations_2" : {
     "aliases" : { },
     "mappings" : {
       "inauguration" : {
@@ -83,17 +82,5 @@ curl -XPUT 'rack01-server10:9200/inaugurations_3/?pretty' -d '
         }
       }
     },
-    "settings" : {
-      "index" : {
-        "creation_date" : "1452618698222",
-        "number_of_shards" : "5",
-        "number_of_replicas" : "1",
-        "uuid" : "P8uxYq_0QxeiyAvLTPi7GQ",
-        "version" : {
-          "created" : "2000099"
-        }
-      }
-    },
     "warmers" : { }
-  }
 }'

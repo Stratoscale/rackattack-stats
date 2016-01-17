@@ -18,16 +18,5 @@ curl -XPUT 'rack01-server10:9200/pools_3/?pretty' -d '
         }
       }
     },
-    "settings" : {
-      "index" : {
-        "creation_date" : "1450203651928",
-        "number_of_shards" : "5",
-        "number_of_replicas" : "1",
-        "uuid" : "QGTpCGn_T6yveLGcyDLX5g",
-        "version" : {
-          "created" : "2000099"
-        }
-      }
-    },
     "warmers" : { }
 }'

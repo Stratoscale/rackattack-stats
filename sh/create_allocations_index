@@ -114,16 +114,5 @@ curl -XPUT 'rack01-server10:9200/allocations_3/?pretty' -d '
     }
     }
 },
-"settings" : {
-    "index" : {
-    "creation_date" : "1449328565407",
-    "number_of_shards" : "5",
-    "number_of_replicas" : "1",
-    "uuid" : "blYIAI3CQqCkDz-Vt9euWA",
-    "version" : {
-        "created" : "2000099"
-    }
-    }
-},
 "warmers" : { }
 }'

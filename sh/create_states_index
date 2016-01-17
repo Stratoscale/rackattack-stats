@@ -19,17 +19,6 @@ curl -XPUT 'rack01-server10:9200/states_3/?pretty' -d '
         }
       }
     },
-    "settings" : {
-      "index" : {
-        "creation_date" : "1448372228505",
-        "number_of_shards" : "5",
-        "number_of_replicas" : "1",
-        "uuid" : "qCtXvONaSe-0DLn7houAsg",
-        "version" : {
-          "created" : "2000099"
-        }
-      }
-    },
     "warmers" : { }
   }
 }'
