@@ -1,9 +1,11 @@
+import json
+
 from rackattack import clientfactory
 
 
 def main():
     client = clientfactory.factory()
-    print client.call('admin__queryStatus')
+    print json.dumps(client.call('admin__queryStatus'))
 
 
 if __name__ == '__main__':
