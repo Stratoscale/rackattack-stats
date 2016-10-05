@@ -19,6 +19,8 @@ from time import sleep
 import rackattack.tcp.transport
 from email.mime.text import MIMEText
 from rackattack import clientfactory
+from rackattack.stats import config
+from rackattack.stats import elasticsearchdbwrapper
 
 
 # Interesting configuration
@@ -30,7 +32,6 @@ SEND_ALERTS_BY_MAIL = True
 SAMPLE_INTERVAL_NR_SECONDS = 60
 SENDER_EMAIL = "eliran@stratoscale.com"
 SMTP_SERVER = 'localhost'
-TIMEZONE = 'Asia/Jerusalem'
 
 
 # In case we cannot connect to sockets and stuff, this
@@ -90,9 +91,8 @@ def flush_msgs_to_mail():
 
 
 def datetime_from_timestamp(timestamp):
-    global TIMEZONE
     datetime_now = datetime.datetime.fromtimestamp(timestamp)
-    datetime_now = pytz.timezone(TIMEZONE).localize(datetime_now)
+    datetime_now = pytz.timezone(config.TIMEZONE).localize(datetime_now)
     return datetime_now
 
 
@@ -146,7 +146,7 @@ def create_connections():
     reload(rackattack.tcp.transport)
     reload(clientfactory)
     rackattack_client = clientfactory.factory()
-    db = elasticsearch.Elasticsearch([{"host": "10.0.1.66", "port": 9200}])
+    db = elasticsearchdbwrapper.ElasticserachDBWrapper(alert_func=send_mail)
 
 
 def validate_rackattack_client_connection_is_closed():

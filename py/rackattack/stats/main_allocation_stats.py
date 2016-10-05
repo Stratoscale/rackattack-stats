@@ -15,14 +15,12 @@ import elasticsearch
 from functools import partial
 from email.mime.text import MIMEText
 from rackattack.tcp import subscribe
+from rackattack.stats import config
 from rackattack.stats import events_monitor
+from rackattack.stats import elasticsearcdbwrapper
 
 
-DB_ADDR = "10.0.1.66"
-DB_PORT = 9200
 MAX_NR_ALLOCATIONS = 150
-TIMEZONE = 'Asia/Jerusalem'
-DB_RECONNECTION_ATTEMPTS_INTERVAL = 60
 EMAIL_SUBSCRIBERS = ("eliran@stratoscale.com",)
 MAX_NR_SECONDS_WITHOUT_EVENTS_BEFORE_ALERTING = 60 * 60 * 6
 SEND_ALERTS_BY_MAIL = True
@@ -30,13 +28,9 @@ SENDER_EMAIL = "eliran@stratoscale.com"
 SMTP_SERVER = 'localhost'
 
 
-is_connected = False
-
-
 def datetime_from_timestamp(timestamp):
-    global TIMEZONE
     datetime_now = datetime.datetime.fromtimestamp(timestamp)
-    datetime_now = pytz.timezone(TIMEZONE).localize(datetime_now)
+    datetime_now = pytz.timezone(config.TIMEZONE).localize(datetime_now)
     return datetime_now
 
 
@@ -380,41 +374,6 @@ def configure_logger():
         logger.addHandler(handler)
 
 
-def validate_db_connection(db, is_first_connection_attempt=True):
-    is_connected = False
-    is_reconnection = not is_first_connection_attempt
-    while not is_connected:
-        if is_reconnection:
-            logging.info("Will try to reconnect again in {} seconds..."
-                         .format(DB_RECONNECTION_ATTEMPTS_INTERVAL))
-            time.sleep(DB_RECONNECTION_ATTEMPTS_INTERVAL)
-            msg = "Reconnecting to the DB (Elasticsearch address: {}:{})...".format(DB_ADDR, DB_PORT)
-        else:
-            msg = "Connecting to the DB (Elasticsearch address: {}:{})...".format(DB_ADDR, DB_PORT)
-        logging.info(msg)
-        try:
-            db_info = db.info()
-            logging.info(db_info)
-            logging.info("Connected to the DB.")
-            is_connected = True
-        except elasticsearch.ConnectionError:
-            msg = "Failed to connect to the DB."
-            logging.exception(msg)
-            if is_first_connection_attempt and not is_reconnection:
-                send_mail(msg)
-            is_reconnection = True
-
-
-def handle_db_disconnection(self, db):
-    msg = "An error occurred while talking to the DB:\n {}. Attempting to reconnect..." \
-        .format(traceback.format_exc())
-    logging.exception(msg)
-    send_mail(msg)
-    validate_db_connection(db, is_first_reconnection_attempt=False)
-    msg = "Connected to the DB again."
-    send_mail(msg)
-
-
 def alert_warn_func(msg):
     logging.warn(msg)
     send_mail(msg)
@@ -427,8 +386,7 @@ def alert_info_func(msg):
 
 def main():
     configure_logger()
-    db = elasticsearch.Elasticsearch([{"host": DB_ADDR, "port": DB_PORT}])
-    validate_db_connection(db)
+    db = elasticsearchdbwrapper.ElasticsearchDBWrapper(alert_func=send_mail)
     subscription_mgr = create_subscription()
     monitor = events_monitor.EventsMonitor(MAX_NR_SECONDS_WITHOUT_EVENTS_BEFORE_ALERTING,
                                            alert_info_func,
@@ -439,11 +397,11 @@ def main():
             allocation_handler.run()
             break
         except elasticsearch.ConnectionTimeout:
-            handle_db_disconnection(db)
+            db.handle_disconnection()
         except elasticsearch.ConnectionError:
-            handle_db_disconnection(db)
+            db.handle_disconnection()
         except elasticsearch.exceptions.TransportError:
-            handle_db_disconnection(db)
+            db.handle_disconnection()
         except KeyboardInterrupt:
             break
         except Exception:
