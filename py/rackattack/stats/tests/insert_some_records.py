@@ -80,6 +80,8 @@ class ElasticsearchDBMock(object):
         result = dict(_id=self._next_record_id)
         self._next_record_id += 1
         self._event.set()
+        logger = logging.getLogger("mockdb")
+        logger.info("Creating record: %s", record)
         return result
 
     def update(self, index, doc_type, id, body):

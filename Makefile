@@ -4,6 +4,8 @@ PYTHON_FILES = $(shell find py -name "*.py")
 PYTHON_FILES_PATH_FROM_PY_ROOT = $(shell find py -name "*.py" | cut -d "/" -f 2-)
 SERVICES_DEPLOYMENT_PATH = $(shell python get_system_setting.py serviceFilesDirPath)
 UPSETO_REQUIREMENTS_FULFILLED = $(shell upseto checkRequirements 2> /dev/null; echo $$?)
+ENV=UPSETO_JOIN_PYTHON_NAMESPACES=yes PYTHONPATH=py
+ENV_WITH_RA=$(ENV) RACKATTACK_PROVIDER=tcp://rackattack-provider.dc1.strato:1014@@amqp://guest:guest@rackattack-provider.dc1.strato:1013@@http://rackattack-provider.dc1.strato:1016
 
 all: check_convention build
 
@@ -15,8 +17,11 @@ unittest: validate_requirements
 	UPSETO_JOIN_PYTHON_NAMESPACES=Yes PYTHONPATH=py python -m coverage run -m rackattack.stats.tests.insert_some_records
 	python -m coverage report --show-missing --fail-under=10 --include=$(COVERED_FILES)
 
-run_with_mocked_db:
-	UPSETO_JOIN_PYTHON_NAMESPACES=yes PYTHONPATH=py RACKATTACK_PROVIDER=tcp://rackattack-provider.dc1.strato:1014@@amqp://guest:guest@rackattack-provider.dc1.strato:1013@@http://rackattack-provider.dc1.strato:1016 python py/rackattack/stats/tests/run_with_mocked_db.py
+run_allocations_with_mocked_db:
+	 $(ENV_WITH_RA) python py/rackattack/stats/tests/run_with_mocked_db.py allocations
+
+run_smart_with_mocked_db:
+	 $(ENV) python py/rackattack/stats/tests/run_with_mocked_db.py smart
 
 .PHONY: build
 build: validate_requirements build/$(EGG_BASENAME)

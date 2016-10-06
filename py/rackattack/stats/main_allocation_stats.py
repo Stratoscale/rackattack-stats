@@ -17,7 +17,7 @@ from email.mime.text import MIMEText
 from rackattack.tcp import subscribe
 from rackattack.stats import config
 from rackattack.stats import events_monitor
-from rackattack.stats import elasticsearcdbwrapper
+from rackattack.stats import elasticsearchdbwrapper
 
 
 MAX_NR_ALLOCATIONS = 150
@@ -364,16 +364,6 @@ def create_subscription():
     return subscription_mgr
 
 
-def configure_logger():
-    loggers = {"": logging.INFO, "elasticsearch.trace": logging.WARNING}
-    for loggerName, level in loggers.iteritems():
-        logger = logging.getLogger(loggerName)
-        logger.setLevel(level)
-        handler = logging.StreamHandler()
-        handler.setLevel(level)
-        logger.addHandler(handler)
-
-
 def alert_warn_func(msg):
     logging.warn(msg)
     send_mail(msg)
@@ -385,7 +375,7 @@ def alert_info_func(msg):
 
 
 def main():
-    configure_logger()
+    config.configure_logger()
     db = elasticsearchdbwrapper.ElasticsearchDBWrapper(alert_func=send_mail)
     subscription_mgr = create_subscription()
     monitor = events_monitor.EventsMonitor(MAX_NR_SECONDS_WITHOUT_EVENTS_BEFORE_ALERTING,

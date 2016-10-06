@@ -54,14 +54,6 @@ def log_msg(msg, level=logging.INFO):
     msg_so_far += msg + '\n'
 
 
-def configure_logger():
-    logger = logging.getLogger('rackattack_stats')
-    logger.setLevel(logging.INFO)
-    handler = logging.StreamHandler()
-    handler.setLevel(logging.INFO)
-    logger.addHandler(handler)
-
-
 def send_mail(msg):
     global SEND_ALERTS_BY_MAIL
     if not SEND_ALERTS_BY_MAIL:
@@ -175,7 +167,7 @@ def socket_error_recovery(is_first_connection_attampt):
 
 def main():
     global is_connected
-    configure_logger()
+    config.configure_logger()
     logger = logging.getLogger('rackattack_stats')
     is_first_connection_attampt = True
 

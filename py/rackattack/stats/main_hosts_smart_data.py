@@ -1,11 +1,13 @@
+import logging
+from rackattack.stats import config
 from rackattack.stats import smartscanner
 from rackattack.stats import elasticsearchdbwrapper
 
 
 def main():
-    configure_logger()
-    db = elasticsearchdbwrapper.get_db_connection(alert_func=send_mail)
-    smartScanner = SmartScanner()
+    config.configure_logger()
+    db = elasticsearchdbwrapper.ElasticsearchDBWrapper()
+    smart_scanner = SmartScanner()
 
     while True:
         try:
