@@ -1,8 +1,11 @@
 import os
 import time
+import pytz
 import yaml
 import logging
+import datetime
 import subprocess
+from rackattack.stats import config
 from rackattack.stats import registry
 from rackattack.stats import statemachinescanner
 
@@ -16,6 +19,12 @@ GENERAL_ATTRIBUTES = {"Model Family": str,
 SMART_ATTRIBUTES = {"Power_On_Hours": int,
                     "LBAs_Written": int,
                     "LBAs_Read": int}
+
+
+def datetime_from_timestamp(timestamp):
+    datetime_now = datetime.datetime.fromtimestamp(timestamp)
+    datetime_now = pytz.timezone(config.TIMEZONE).localize(datetime_now)
+    return datetime_now
 
 
 class SmartScanner:
@@ -44,7 +53,7 @@ class SmartScanner:
     def _parse_scan_result(self, scan_result):
         parsed_result = dict()
         parsable_time = scan_result["start"][0].split(",")[0]
-        parsed_result["scan_time"] = time.strptime(parsable_time, "%Y-%m-%d %H:%M:%S")
+        parsed_result["date"] = time.strptime(parsable_time, "%Y-%m-%d %H:%M:%S")
         for attribute, value in scan_result["matches"]:
             attr_type = self._get_attr_type(attribute)
             if attr_type == int:
@@ -91,7 +100,7 @@ class SmartScanner:
         return results
         
     def _is_result_new(self, result):
-        scan_time = result["scan_time"]
+        scan_time = result["date"]
         server = result["server"]
         prev_scan_time = self._scan_time_registry.read(server)
         if prev_scan_time is None or scan_time > prev_scan_time:
@@ -100,6 +109,8 @@ class SmartScanner:
         return False
 
     def _insert_to_db(self, result):
+        result["date"] = time.mktime(result["date"])
+        result["date"] = datetime_from_timestamp(result["date"])
         self._db.create(index="smart_results", doc_type="smart_result", body=result)
 
     def _initialize_smart_state_machine(self):
