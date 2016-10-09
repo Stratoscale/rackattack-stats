@@ -8,11 +8,11 @@ from rackattack.stats import elasticsearchdbwrapper
 def main():
     logconfig.configure_logger()
     db = elasticsearchdbwrapper.ElasticsearchDBWrapper()
-    smart_scanner = smartscanner.SmartScanner()
+    smart_scanner = smartscanner.SmartScanner(db)
 
     while True:
         try:
-            #  do stuff
+            smart_scanner.run()
             break
         except elasticsearch.ConnectionTimeout:
             db.handle_disconnection()
