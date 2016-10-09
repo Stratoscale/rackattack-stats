@@ -23,13 +23,9 @@ def main():
             db.handle_disconnection()
         except KeyboardInterrupt:
             break
-        except Exception:
-            msg = "Critical error, exiting.\n\n"
-            logging.exception(msg)
-            msg += traceback.format_exc()
-            send_mail(msg)
-            sys.exit(1)
-    logging.info("Done.")
+        except:
+            logging.error("Critical error, exiting")
+            raise
 
 if __name__ == '__main__':
     main()
