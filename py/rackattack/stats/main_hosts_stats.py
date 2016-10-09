@@ -26,7 +26,7 @@ from rackattack.stats import elasticsearchdbwrapper
 
 # Interesting configuration
 EMAIL_SUBSCRIBERS = ("eliran@stratoscale.com", "rom@stratoscale.com")
-SEND_ALERTS_BY_MAIL = True
+SEND_ALERTS_BY_MAIL = False
 
 
 # Less interesting configuration
