@@ -9,7 +9,7 @@ from rackattack.stats import statemachinescanner
 
 SCAN_INTERVAL_NR_SECONDS = 4
 REGISTRY_PATH = "/var/lib/rackattackstats/smartscanner-registry.json"
-RACKATTACK_LOGS_PATH = "removeme/"
+RACKATTACK_LOGS_PATH = "/var/lib/rackattackphysical/seriallogs/"
 
 GENERAL_ATTRIBUTES = {"Model Family": str,
                       "Serial Number": str}
@@ -55,11 +55,15 @@ class SmartScanner:
         pattern = GENERAL_ATTRIBUTES.keys() + SMART_ATTRIBUTES.keys() + \
             ["Reading SMART data from", "SMART Error"]
         cmd = ["egrep", "-ra", "|".join(pattern), RACKATTACK_LOGS_PATH]
-        cmd = subprocess.Popen(cmd, stdout=subprocess.PIPE, close_fds=True)
-        result = cmd.wait()
-        if result != 0:
+        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, close_fds=True)
+        output, error = proc.communicate()
+        if proc.returncode == 1:
             return ""
-        return cmd.stdout.read()
+        elif proc.returncode != 0:
+            logging.warn("grep failed for an unknown reason. return code: %(returncode)s. Error: %(error)s."
+                         " Command: %(cmd)s",
+                         dict(returncode=proc.returncode, error=error, cmd=cmd))
+        return output
 
     def _get_smart_results(self):
         raw_results = self._get_raw_results()
