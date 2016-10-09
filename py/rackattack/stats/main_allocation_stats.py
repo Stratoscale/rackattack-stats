@@ -16,6 +16,7 @@ from functools import partial
 from email.mime.text import MIMEText
 from rackattack.tcp import subscribe
 from rackattack.stats import config
+from rackattack.stats import logconfig
 from rackattack.stats import events_monitor
 from rackattack.stats import elasticsearchdbwrapper
 
@@ -375,7 +376,7 @@ def alert_info_func(msg):
 
 
 def main():
-    config.configure_logger()
+    logconfig.configure_logger()
     db = elasticsearchdbwrapper.ElasticsearchDBWrapper(alert_func=send_mail)
     subscription_mgr = create_subscription()
     monitor = events_monitor.EventsMonitor(MAX_NR_SECONDS_WITHOUT_EVENTS_BEFORE_ALERTING,

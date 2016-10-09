@@ -20,6 +20,7 @@ import rackattack.tcp.transport
 from email.mime.text import MIMEText
 from rackattack import clientfactory
 from rackattack.stats import config
+from rackattack.stats import logconfig
 from rackattack.stats import elasticsearchdbwrapper
 
 
@@ -167,7 +168,7 @@ def socket_error_recovery(is_first_connection_attampt):
 
 def main():
     global is_connected
-    config.configure_logger()
+    logconfig.configure_logger()
     logger = logging.getLogger('rackattack_stats')
     is_first_connection_attampt = True
 

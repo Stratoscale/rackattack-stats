@@ -1,11 +1,11 @@
 import logging
-from rackattack.stats import config
+from rackattack.stats import logconfig
 from rackattack.stats import smartscanner
 from rackattack.stats import elasticsearchdbwrapper
 
 
 def main():
-    config.configure_logger()
+    logconfig.configure_logger()
     db = elasticsearchdbwrapper.ElasticsearchDBWrapper()
     smart_scanner = SmartScanner()
 
