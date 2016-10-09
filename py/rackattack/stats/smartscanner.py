@@ -7,7 +7,7 @@ from rackattack.stats import registry
 from rackattack.stats import statemachinescanner
 
 
-SCAN_INTERVAL_NR_SECONDS = 4
+SCAN_INTERVAL_NR_SECONDS = 60 * 30
 REGISTRY_PATH = "/var/lib/rackattackstats/smartscanner-registry.json"
 RACKATTACK_LOGS_PATH = "/var/lib/rackattackphysical/seriallogs/"
 
