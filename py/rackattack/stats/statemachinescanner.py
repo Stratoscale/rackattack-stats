@@ -27,18 +27,20 @@ class StateMachineScanner:
     def _scan_line(self, line):
         result = None
         if self._state == self.STATE_OUTSIDE_RESULT:
-            results = re.findall(self._start_pattern, line)
-            if results:
-                self._current_result = dict(start=results[0])
+            results = re.search(self._start_pattern, line)
+            if results is not None:
+                results = results.groups()
+                self._current_result = dict(start=results)
                 self._state = self.STATE_INSIDE_RESULT
         elif self._state == self.STATE_INSIDE_RESULT:
             for pattern in self._patterns:
-                results = re.findall(pattern, line)
-                if results:
-                    self._current_result.setdefault("matches", []).append(results[0])
-            results = re.findall(self._stop_pattern, line)
-            if results:
-                self._current_result["end"] = results[0]
+                results = re.search(pattern, line)
+                if results is not None:
+                    results = results.groups()
+                    self._current_result.setdefault("matches", []).append(results)
+            results = re.search(self._stop_pattern, line)
+            if results is not None:
+                results = results.groups()
                 self._state = self.STATE_OUTSIDE_RESULT
                 result = self._current_result
                 self._current_result = None

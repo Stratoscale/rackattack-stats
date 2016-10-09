@@ -29,6 +29,9 @@ def datetime_from_timestamp(timestamp):
     return datetime_now
 
 
+class InvalidTime(Exception): pass
+
+
 class SmartScanner:
     def __init__(self, db):
         self._scan_time_registry = registry.Registry(REGISTRY_PATH)
@@ -52,15 +55,29 @@ class SmartScanner:
                 self._insert_to_db(result)
         self._scan_time_registry.flush()
 
-    def _parse_scan_result(self, scan_result):
+    def _parse_scan_result(self, scan_result, server):
         parsed_result = dict()
         parsable_time = scan_result["start"][0].split(",")[0]
-        parsed_result["date"] = time.strptime(parsable_time, "%Y-%m-%d %H:%M:%S")
+        try:
+            parsed_result["date"] = time.strptime(parsable_time, "%Y-%m-%d %H:%M:%S")
+        except:
+            raise InvalidTime
         for attribute, value in scan_result["matches"]:
-            attr_type = self._get_attr_type(attribute)
+            try:
+                attr_type = self._get_attr_type(attribute)
+            except:
+                logging.warning("Invalid attribute name '%(attribute)s. Server: %(server)s",
+                                dict(server=server, attribute=attribute))
+                continue
             value = value.replace("\0", "")
             if attr_type == int:
-                value = int(value)
+                try:
+                    value = int(value)
+                except:
+                    logging.warning("Cannot parse value '%(value)s' as int. Server: %(server)s"
+                                    "Attribute: %(attribute)s",
+                                    dict(server=server, value=value, attribute=attribute))
+                    continue
             attribute = attribute.lower().replace(" ", "_")
             parsed_result[attribute.lower()] = value
         parsed_result["device"] = scan_result["start"][1]
@@ -86,9 +103,13 @@ class SmartScanner:
         for server, results in raw_results.iteritems():
             results = self._state_machine.scan(results)
             for result in results:
-                result = self._parse_scan_result(result)
-                result["server"] = server
-                yield result
+                try:
+                    parsed_result = self._parse_scan_result(result, server)
+                except InvalidTime:
+                    logging.warning("Cannot parse scan result: %s" % (str(result),))
+                    continue
+                parsed_result["server"] = server
+                yield parsed_result
 
     def _group_raw_results_by_server(self, raw_results):
         results = dict()
@@ -114,19 +135,18 @@ class SmartScanner:
     def _insert_to_db(self, result):
         result["date"] = time.mktime(result["date"])
         result["date"] = datetime_from_timestamp(result["date"])
-        self._db.create(index="smart_results", doc_type="smart_result", body=result)
+        self._db.create(index="smart_data", doc_type="smart_data_doc", body=result)
 
     def _initialize_smart_state_machine(self):
-        start_event_pattern = r"([\d\-]+\s[\d\:\,]+).*Reading SMART data from device (.*)\.\.\."
-        start_event_pattern = r"([\d\-]+\s[\d\:\,]+).*Reading SMART data from device (.*)\.\.\."
+        start_event_pattern = r"(\d{4}\-\d{2}-\d{2}\s\d{2}\:\d{2}\:\d{2}\,\d+?) - \w+? - \w+? - Reading SMART data from device (\/dev\/[a-zA-Z]+?)\.\.\."
         end_event_pattern = "SMART Error Log Version"
         self._state_machine = statemachinescanner.StateMachineScanner(
             start_event_pattern, end_event_pattern)
         for attr in GENERAL_ATTRIBUTES:
-            pattern = r"(%s):\s+(\S+)" % (attr,)
+            pattern = r"(%s):\s+?(\S+?)" % (attr,)
             self._state_machine.add_pattern(pattern)
         for attr in SMART_ATTRIBUTES:
-            pattern = r"(%s)\s+\S+\s+\S+\s+\S+\s+\S+\s+\S+\s+\S+\s+\S+\s+(\S+)" % (attr,)
+            pattern = r"(%s)\s+?\S+?\s+?\S+?\s+?\S+?\s+?\S+?\s+?\S+?\s+?\S+?\s+?\S+?\s+?(\d+?)" % (attr,)
             self._state_machine.add_pattern(pattern)
     
     def _get_attr_type(self, attribute):
