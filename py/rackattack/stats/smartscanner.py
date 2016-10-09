@@ -58,6 +58,7 @@ class SmartScanner:
         parsed_result["date"] = time.strptime(parsable_time, "%Y-%m-%d %H:%M:%S")
         for attribute, value in scan_result["matches"]:
             attr_type = self._get_attr_type(attribute)
+            value = value.replace("\0", "")
             if attr_type == int:
                 value = int(value)
             attribute = attribute.lower().replace(" ", "_")
