@@ -15,10 +15,12 @@ REGISTRY_PATH = "/var/lib/rackattackstats/smartscanner-registry.json"
 RACKATTACK_LOGS_PATH = "/var/lib/rackattackphysical/seriallogs/"
 
 GENERAL_ATTRIBUTES = {"Model Family": str,
-                      "Serial Number": str}
+                      "Serial Number": str,
+                      "Rotation Rate": str}
 SMART_ATTRIBUTES = {"Power_On_Hours": int,
                     "LBAs_Written": int,
-                    "LBAs_Read": int}
+                    "LBAs_Read": int,
+                    "Runtime_Bad_Block": int}
 
 
 def datetime_from_timestamp(timestamp):
