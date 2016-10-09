@@ -1,4 +1,5 @@
 import logging
+import traceback
 from rackattack.stats import logconfig
 from rackattack.stats import smartscanner
 from rackattack.stats import elasticsearchdbwrapper
@@ -7,7 +8,7 @@ from rackattack.stats import elasticsearchdbwrapper
 def main():
     logconfig.configure_logger()
     db = elasticsearchdbwrapper.ElasticsearchDBWrapper()
-    smart_scanner = SmartScanner()
+    smart_scanner = smartscanner.SmartScanner()
 
     while True:
         try:
