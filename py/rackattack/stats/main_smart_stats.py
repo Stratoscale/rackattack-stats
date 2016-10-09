@@ -1,5 +1,6 @@
 import logging
 import traceback
+import elasticsearch
 from rackattack.stats import logconfig
 from rackattack.stats import smartscanner
 from rackattack.stats import elasticsearchdbwrapper

@@ -27,11 +27,14 @@ class SmartScanner:
 
     def run(self):
         while True:
+            logging.info("Scanning log files...")
             self._scan_once()
+            nrMinutes = SCAN_INTERVAL_NR_SECONDS / 60
+            logging.info("Scan complete. Scheduling next scan to %(nrMinutes)s minutes from now.",
+                         dict(nrMinutes=nrMinutes))
             time.sleep(SCAN_INTERVAL_NR_SECONDS)
 
     def _scan_once(self):
-        logging.info("Scanning log files...")
         results = self._get_smart_results()
         for result in results:
             if self._is_result_new(result):
