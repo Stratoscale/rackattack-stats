@@ -53,14 +53,14 @@ def fedora(osRelease, settingType):
     return settings[settingType]
 
 
-def centos(osRelease):
+def centos(osRelease, settingType):
     settings = dict(systemManager="systemd", serviceFilesDirPath="/usr/lib/systemd/system")
     return settings[settingType]
 
 
 def getSystemSetting(osRelease, settingType):
     osID = osRelease["ID"]
-    osHandlers = dict(ubuntu=ubuntu, fedora=fedora)
+    osHandlers = dict(ubuntu=ubuntu, fedora=fedora, centos=centos)
     if osID not in osHandlers:
         print "Unsupported operating system type: %(osID)s. Cannot perform installation since the system " \
             "manager (e.g. upstart, systemd) cannot be determined by the OS type. You can tell the " \
