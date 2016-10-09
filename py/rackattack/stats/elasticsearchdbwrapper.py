@@ -3,6 +3,7 @@ import logging
 import traceback
 import elasticsearch
 from rackattack.stats import config
+from rackattack.stats import logconfig
 
 
 DB_RECONNECTION_ATTEMPTS_INTERVAL = 60
@@ -18,7 +19,7 @@ class ElasticsearchDBWrapper:
                                                  "port": config.ELASTICSEARCH_DB_PORT}])
         self._was_first_connection_attempt_done_yet = False
         self._validate()
-        config.configure_logger("elasticsearch.trace", logging.WARNING)
+        logconfig.configure_logger("elasticsearch.trace", logging.WARNING)
 
     def create(self, *args, **kwargs):
         self._db.create(*args, **kwargs)
