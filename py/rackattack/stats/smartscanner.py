@@ -17,8 +17,7 @@ RACKATTACK_LOGS_PATH = "/var/lib/rackattackphysical/seriallogs/"
 GENERAL_ATTRIBUTES = {"Model Family": str,
                       "Serial Number": str,
                       "Rotation Rate": str}
-SMART_ATTRIBUTES = {"Power_On_Hours": int,
-                    "LBAs_Written": int,
+SMART_ATTRIBUTES = {"LBAs_Written": int,
                     "LBAs_Read": int,
                     "Runtime_Bad_Block": int}
 
