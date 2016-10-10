@@ -17,8 +17,9 @@ RACKATTACK_LOGS_PATH = "/var/lib/rackattackphysical/seriallogs/"
 GENERAL_ATTRIBUTES = {"Model Family": str,
                       "Serial Number": str,
                       "Rotation Rate": str}
-SMART_ATTRIBUTES = {"LBAs_Written": int,
-                    "LBAs_Read": int,
+SMART_ATTRIBUTES = {"Total_LBAs_Written": int,
+                    "Total_LBAs_Read": int,
+                    "UDMA_CRC_Error_Count": int,
                     "Runtime_Bad_Block": int}
 
 
@@ -148,10 +149,10 @@ class SmartScanner:
         self._state_machine = statemachinescanner.StateMachineScanner(
             start_event_pattern, end_event_pattern)
         for attr in GENERAL_ATTRIBUTES:
-            pattern = r"(%s):\s+?(\S+?)" % (attr,)
+            pattern = r"(%s):\s+(.+)" % (attr,)
             self._state_machine.add_pattern(pattern)
         for attr in SMART_ATTRIBUTES:
-            pattern = r"(%s)\s+?\S+?\s+?\S+?\s+?\S+?\s+?\S+?\s+?\S+?\s+?\S+?\s+?\S+?\s+?(\d+?)" % (attr,)
+            pattern = r"(%s)\s+?\S+?\s+?\S+?\s+?\S+?\s+?\S+?\s+?\S+?\s+?\S+?\s+?\S+?\s+?(\d+)" % (attr,)
             self._state_machine.add_pattern(pattern)
     
     def _get_attr_type(self, attribute):
