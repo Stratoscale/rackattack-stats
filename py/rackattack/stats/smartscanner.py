@@ -43,15 +43,20 @@ class SmartScanner:
             logging.info("Scanning log files...")
             self._scan_once()
             nrMinutes = SCAN_INTERVAL_NR_SECONDS / 60
-            logging.info("Scan complete. Scheduling next scan to %(nrMinutes)s minutes from now.",
-                         dict(nrMinutes=nrMinutes))
+            msg = "Scheduling next scan to %(nrMinutes)s minutes from now." % \
+                  dict(nrMinutes=nrMinutes)
+            logging.info(msg)
             time.sleep(SCAN_INTERVAL_NR_SECONDS)
 
     def _scan_once(self):
+        nrNewResults = 0
         results = self._get_smart_results()
         for result in results:
             if self._is_result_new(result):
                 self._insert_to_db(result)
+                nrNewResults += 1
+        logging.info("%(nrNewResults)s new results were inserted during this scan cycle.",
+                     dict(nrNewResults=nrNewResults))
         self._scan_time_registry.flush()
 
     def _parse_scan_result(self, scan_result, server):
@@ -134,6 +139,7 @@ class SmartScanner:
     def _insert_to_db(self, result):
         result["date"] = time.mktime(result["date"])
         result["date"] = datetime_from_timestamp(result["date"])
+        logging.debug(result)
         self._db.create(index="smart_data", doc_type="smart_data_doc", body=result)
 
     def _initialize_smart_state_machine(self):
