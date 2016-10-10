@@ -13,6 +13,7 @@ def main():
 
     while True:
         try:
+            logging.info("Starting SMART scan loop...")
             smart_scanner.run()
             break
         except elasticsearch.ConnectionTimeout:
