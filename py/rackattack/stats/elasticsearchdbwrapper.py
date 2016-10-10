@@ -30,8 +30,9 @@ class ElasticsearchDBWrapper:
     def handle_disconnection(self):
         msg = "An error occurred while talking to the DB:\n {}. Attempting to reconnect..." \
             .format(traceback.format_exc())
-        logging.exception(msg)
-        self._alert_func(msg)
+        logging.error(msg)
+        if self._alert_func is not None:
+            self._alert_func(msg)
         self._validate(db, is_first_reconnection_attempt=False)
         if self._alert_func is not None:
             msg = "Connected to the DB again."
