@@ -123,7 +123,12 @@ class SmartScanner:
             if not line:
                 continue
             maxsplit = 1
-            filename, result = line.split(":", maxsplit)
+            try:
+                filename, result = line.split(":", maxsplit)
+            except ValueError:
+                logging.error("Cannot split the following line:")
+                logging.error(line)
+                continue
             server = os.path.basename(filename).split("-serial.txt")[0]
             results.setdefault(server, []).append(result)
         return results
