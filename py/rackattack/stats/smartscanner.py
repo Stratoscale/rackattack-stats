@@ -17,10 +17,13 @@ RACKATTACK_LOGS_PATH = "/var/lib/rackattackphysical/seriallogs/"
 GENERAL_ATTRIBUTES = {"Model Family": str,
                       "Serial Number": str,
                       "Rotation Rate": str}
-SMART_ATTRIBUTES = {"Total_LBAs_Written": int,
-                    "Total_LBAs_Read": int,
-                    "UDMA_CRC_Error_Count": int,
-                    "Runtime_Bad_Block": int}
+SMART_ATTRIBUTES = {
+                    241: dict(name="Total_LBAs_Written", _type=int),
+                    242: dict(name="Total_LBAs_Read", _type=int),
+                    199: dict(name="UDMA_CRC_Error_Count", _type=int),
+                    183: dict(name="Runtime_Bad_Block", _type=int),
+                    246: dict(name="Unknown_Attribute", _type=int, display="Total_Sectors_Written"),
+                   }
 
 
 def datetime_from_timestamp(timestamp):
@@ -68,30 +71,38 @@ class SmartScanner:
         except:
             raise InvalidTime
         for attribute, value in scan_result["matches"]:
-            try:
-                attr_type = self._get_attr_type(attribute)
-            except:
-                logging.warning("Invalid attribute name '%(attribute)s. Server: %(server)s",
-                                dict(server=server, attribute=attribute))
-                continue
             value = value.replace("\0", "")
-            if attr_type == int:
+            attribute = attribute.replace("\0", "")
+            if attribute in GENERAL_ATTRIBUTES:
+                _type = GENERAL_ATTRIBUTES[attribute]
+                display = attribute
+            else:
                 try:
-                    value = int(value)
+                    code = int(attribute)
+                    _type = SMART_ATTRIBUTES[code]["_type"]
+                    name = SMART_ATTRIBUTES[code]["name"]
+                    display = SMART_ATTRIBUTES[code].get("display", name)
                 except:
-                    logging.warning("Cannot parse value '%(value)s' as int. Server: %(server)s"
-                                    "Attribute: %(attribute)s",
-                                    dict(server=server, value=value, attribute=attribute))
+                    logging.warning("Invalid attribute '%(attribute)s.",
+                                    dict(attribute=attribute))
                     continue
-            attribute = attribute.lower().replace(" ", "_")
-            parsed_result[attribute.lower()] = value
+            try:
+                value = _type(value)
+            except:
+                logging.warning("Cannot parse value '%(value)s'. Server: %(server)s"
+                                "Attribute: %(attribute)s",
+                                dict(server=server, value=value, attribute=attribute))
+                continue
+            display = display.lower().replace(" ", "_")
+            parsed_result[display] = value
         parsed_result["device"] = scan_result["start"][1]
         return parsed_result
 
     def _get_raw_results(self):
-        pattern = GENERAL_ATTRIBUTES.keys() + SMART_ATTRIBUTES.keys() + \
-            ["Reading SMART data from", "SMART Error"]
-        cmd = ["egrep", "-ra", "|".join(pattern), RACKATTACK_LOGS_PATH]
+        attrs = list(set(GENERAL_ATTRIBUTES.keys()))
+        attrs += ["%d %s" % (code, attr["name"]) for (code, attr) in SMART_ATTRIBUTES.iteritems()]
+        attrs += ["Reading SMART data from", "SMART Error"]
+        cmd = ["egrep", "-ra", "|".join(attrs), RACKATTACK_LOGS_PATH]
         proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, close_fds=True)
         output, error = proc.communicate()
         if proc.returncode == 1:
@@ -156,11 +167,7 @@ class SmartScanner:
         for attr in GENERAL_ATTRIBUTES:
             pattern = r"(%s):\s+(.+)" % (attr,)
             self._state_machine.add_pattern(pattern)
-        for attr in SMART_ATTRIBUTES:
-            pattern = r"(%s)\s+?\S+?\s+?\S+?\s+?\S+?\s+?\S+?\s+?\S+?\s+?\S+?\s+?\S+?\s+?(\d+)" % (attr,)
+        for code, attr in SMART_ATTRIBUTES.iteritems():
+            pattern = r"(%d) %s\s+?\S+?\s+?\S+?\s+?\S+?\s+?\S+?\s+?\S+?\s+?\S+?\s+?\S+?\s+?(\S+)" \
+                      % (code, attr["name"],)
             self._state_machine.add_pattern(pattern)
-    
-    def _get_attr_type(self, attribute):
-        types = GENERAL_ATTRIBUTES
-        types.update(SMART_ATTRIBUTES)
-        return types[attribute]
