@@ -33,7 +33,7 @@ class ElasticsearchDBWrapper:
         logging.error(msg)
         if self._alert_func is not None:
             self._alert_func(msg)
-        self._validate(db, is_first_reconnection_attempt=False)
+        self._validate(self._db, is_first_reconnection_attempt=False)
         if self._alert_func is not None:
             msg = "Connected to the DB again."
             self._alert_func(msg)
