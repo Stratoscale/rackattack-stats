@@ -70,6 +70,7 @@ class SmartScanner:
         try:
             parsed_result["date"] = time.strptime(parsable_time, "%Y-%m-%d %H:%M:%S")
         except:
+            logging.warning("Cannot parse scan time: %s" % (str(parsable_time),))
             raise InvalidTime
         for attribute, value in scan_result["matches"]:
             value = value.replace("\0", "")
@@ -93,6 +94,8 @@ class SmartScanner:
                 logging.warning("Cannot parse value '%(value)s'. Server: %(server)s"
                                 "Attribute: %(attribute)s",
                                 dict(server=server, value=value, attribute=attribute))
+                logging.warning("Value '%(value)s' cannot be converted to %(_type)s",
+                                dict(value=value, _type=_type))
                 continue
             display = display.lower().replace(" ", "_")
             parsed_result[display] = value
@@ -123,7 +126,6 @@ class SmartScanner:
                 try:
                     parsed_result = self._parse_scan_result(result, server)
                 except InvalidTime:
-                    logging.warning("Cannot parse scan result: %s" % (str(result),))
                     continue
                 parsed_result["server"] = server
                 yield parsed_result
