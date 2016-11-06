@@ -33,7 +33,7 @@ class ElasticsearchDBWrapper:
         logging.error(msg)
         if self._alert_func is not None:
             self._alert_func(msg)
-        self._validate(self._db, is_first_reconnection_attempt=False)
+        self._validate()
         if self._alert_func is not None:
             msg = "Connected to the DB again."
             self._alert_func(msg)
@@ -49,6 +49,7 @@ class ElasticsearchDBWrapper:
                             .format(DB_RECONNECTION_ATTEMPTS_INTERVAL))
                 time.sleep(DB_RECONNECTION_ATTEMPTS_INTERVAL)
                 msg = "Reconnecting to the DB (Elasticsearch address: {}:{})...".format(db_addr, db_port)
+                self._was_first_connection_attempt_done_yet = True
             else:
                 msg = "Connecting to the DB (Elasticsearch address: {}:{})...".format(db_addr, db_port)
             logging.info(msg)
