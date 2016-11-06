@@ -20,6 +20,7 @@ GENERAL_ATTRIBUTES = {"Model Family": str,
 SMART_ATTRIBUTES = {
                     241: dict(name="Total_LBAs_Written", _type=int),
                     242: dict(name="Total_LBAs_Read", _type=int),
+                    198: dict(name="Offline_Uncorrectable", _type=int),
                     199: dict(name="UDMA_CRC_Error_Count", _type=int),
                     183: dict(name="Runtime_Bad_Block", _type=int),
                     246: dict(name="Unknown_Attribute", _type=int, display="Total_Sectors_Written"),
