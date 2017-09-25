@@ -1,0 +1,46 @@
+curl -X PUT 'elastic.dc1:9200/smart_stats' -d '
+{
+    "mappings" : {
+        "smart_stat" : {
+            "properties" : {
+                 "date": {
+                    "type": "date",
+                    "format": "strict_date_optional_time||epoch_millis"
+                  },
+                  "device": {
+                    "type": "keyword"
+                  },
+                  "model_family": {
+                    "type": "keyword"
+                  },
+                  "offline_uncorrectable": {
+                    "type": "long"
+                  },
+                  "rotation_rate": {
+                    "type": "keyword"
+                  },
+                  "runtime_bad_block": {
+                    "type": "long"
+                  },
+                  "serial_number": {
+                    "type": "keyword"
+                  },
+                  "server": {
+                    "type": "keyword"
+                  },
+                  "total_lbas_read": {
+                    "type": "long"
+                  },
+                  "total_lbas_written": {
+                    "type": "long"
+                  },
+                  "total_sectors_written": {
+                    "type": "long"
+                  },
+                  "udma_crc_error_count": {
+                    "type": "long"
+                  }
+            }
+        }
+    }
+}'

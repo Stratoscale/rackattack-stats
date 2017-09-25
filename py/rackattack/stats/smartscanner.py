@@ -158,7 +158,7 @@ class SmartScanner:
         result["date"] = time.mktime(result["date"])
         result["date"] = datetime_from_timestamp(result["date"])
         logging.debug(result)
-        self._db.create(index="smart_data", doc_type="smart_data_doc", body=result)
+        self._db.create(index="smart_stats", doc_type="smart_stat", body=result)
 
     def _initialize_smart_state_machine(self):
         start_event_pattern = r"(\d{4}\-\d{2}-\d{2}\s\d{2}\:\d{2}\:\d{2}\,\d+?) - \w+? - \w+? - Reading SMART data from device (\/dev\/[a-zA-Z]+?)\.\.\."
